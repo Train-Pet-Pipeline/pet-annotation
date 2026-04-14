@@ -18,6 +18,69 @@
 
 ---
 
+## Errata (post-review fixes — apply during execution)
+
+以下问题在 plan review 中发现，执行每个 task 时必须参照修正：
+
+### E1: `validate_pair()` 需传 `version` 参数（Task 11）
+`validate_output(json.dumps(chosen))` → `validate_output(json.dumps(chosen), version=schema_version)`。
+给 `validate_pair()` 添加 `schema_version: str = "1.0"` 参数，传递给 `validate_output`。
+
+### E2: `setup_logging()` 需真正的 JSON formatter（Task 3）
+替换 `format='%(message)s'` 为 `python-json-logger` 的 `JsonFormatter`。
+在 `requirements.in` 中添加 `python-json-logger>=2.0,<3.0`。
+
+### E3: 消除 `store._conn` 直接访问（Task 2 + 10 + 11 + 13）
+在 `AnnotationStore` 中添加以下 public 方法：
+- `fetch_auto_checked_annotations(primary_model) -> list[Row]`
+- `fetch_approved_primary_annotations(primary_model) -> list[Row]`
+- `get_status_counts() -> list[Row]`
+- `get_model_stats() -> list[Row]`
+- `update_review_status(annotation_id, status) -> None`
+- `update_review_and_frame_status(annotation_id, review_status, frame_id, frame_status) -> None`
+
+`auto_check.py`、`generate_pairs.py`、`cli.py stats` 命令使用这些方法，不直接访问 `_conn`。
+
+### E4: tenacity retry 使用 config 的 `max_retries`（Task 6）
+不能在类级别用 `@retry` 装饰器。改为在 `__init__` 中动态包装：
+```python
+self._call_api_with_retry = retry(
+    stop=stop_after_attempt(max_retries),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    retry=retry_if_exception_type((aiohttp.ClientError, TimeoutError)),
+)(self._call_api)
+```
+
+### E5: Export 模块补充测试（Task 12）
+- 添加 `to_dpo_pairs.py` 的测试（格式验证、空数据处理、中文 narrative）
+- 修复 DPO export 中 `images: []` 问题，应从 pair metadata 中取 frame_path
+
+### E6: `prompt_hash` 应使用模板原文（Task 9）
+spec 明确说用 Jinja2 模板原文，不是渲染后输出。修改 `compute_prompt_hash` 读取模板文件内容：
+```python
+from pet_schema.renderer import VERSIONS_DIR
+template_text = (VERSIONS_DIR / f"v{version}" / "prompt_user.jinja2").read_text()
+system_text = (VERSIONS_DIR / f"v{version}" / "prompt_system.txt").read_text()
+```
+
+### E7: `asyncio.get_event_loop()` → `asyncio.get_running_loop()`（Task 9）
+Python 3.10+ 中 `get_event_loop()` 已弃用用于获取运行中的 loop。
+
+### E8: 补充缺失文件
+- Task 1: 创建 `src/pet_annotation/__main__.py`（`from pet_annotation.cli import cli; cli()`）
+- Task 9: orchestrator 的 `run()` 返回的 stats 需写入 `reports/annotation_stats.json`
+- Task 10: 添加 `src/pet_annotation/quality/llm_judge.py` stub
+- Task 14: 添加 `src/pet_annotation/human_review/sft_config.xml` 和 `dpo_config.xml` 空模板
+- Task 11: `generate_pairs.py` 需要 `__main__` block（DVC 直接调用）
+
+### E9: conftest FRAMES_SCHEMA 添加 CHECK 约束（Task 1）
+补上 `annotation_status` 列的 CHECK 约束，与生产 schema.sql 一致。
+
+### E10: aiohttp.ClientSession 复用（Task 6）
+不要在 `_call_api` 中每次请求创建 session。改为 Provider 持有一个 session，在 `__init__` 中创建（lazy init），提供 `close()` 方法。
+
+---
+
 ## Task 1: Project scaffolding + pyproject.toml + Makefile
 
 **Files:**
