@@ -50,6 +50,25 @@ pet-annotation 消费 pet-data 的 `frames` 表中的帧图像，通过云端 VL
 - `acquire()` 选择余量比值最低的 key
 - 所有 key 满载时 await 等待，不返回错误
 
+### 2.5 跨仓库数据库访问模式
+
+pet-annotation 需要操作 pet-data 的 SQLite 数据库（读 `frames` 表、更新 `annotation_status`、写 `annotations`/`model_comparisons` 表）。访问模式约定：
+
+- **pet-annotation 的 `store.py` 创建独立的 `AnnotationStore` 类**，接收 pet-data 数据库文件路径，打开自己的 SQLite 连接
+- **表的归属边界**：`frames` 表由 pet-data 的 `FrameStore` 创建和管理；`annotations`/`model_comparisons` 表由 pet-annotation 创建和管理
+- **pet-annotation 对 `frames` 表只做 `SELECT` 和 `UPDATE annotation_status`**，不做 DDL 或其他列修改
+- **建表方式**：`AnnotationStore.__init__` 中执行 `CREATE TABLE IF NOT EXISTS`（SQL 脚本在 `migrations/001_create_annotation_tables.sql`）。不使用 Alembic（pet-annotation 不拥有 `frames` 表的迁移权）
+- **WAL 模式**：两个连接都使用 WAL 模式（SQLite 允许 WAL 下多连接并发读，写仍串行）。pet-data 的 `FrameStore` 已启用 WAL
+- **并发保护**：pet-annotation 和 pet-data 不应同时对同一行做写操作。实际上 pet-data 的数据采集完成后才进入 annotation 阶段，时序上不冲突。如果出现 `SQLITE_BUSY`，tenacity 重试机制覆盖
+- **数据库路径**：从 `params.yaml` 的 `database.path` 字段读取
+
+### 2.6 日志规范
+
+遵循开发指南要求，使用结构化 JSON 日志格式：
+- 所有模块通过 `logging.getLogger(__name__)` 获取 logger
+- 根 logger 配置 JSON formatter（在 `config.py` 中初始化）
+- API 调用日志包含 `model_name`、`frame_id`、`latency_ms`、`tokens` 等结构化字段
+
 ---
 
 ## 3. 项目结构
@@ -60,7 +79,7 @@ pet-annotation/
 │   └── pet_annotation/
 │       ├── __init__.py
 │       ├── config.py                  # 加载 params.yaml，Pydantic Settings
-│       ├── store.py                   # 扩展存储层（annotations/model_comparisons 表）
+│       ├── store.py                   # AnnotationStore（独立连接 pet-data 的 SQLite，见 §2.5）
 │       ├── teacher/
 │       │   ├── __init__.py
 │       │   ├── provider.py            # Provider 抽象基类 + ProviderRegistry
@@ -108,11 +127,14 @@ pet-annotation/
 │   ├── test_export.py
 │   ├── test_store.py
 │   └── test_config.py
+├── migrations/
+│   └── 001_create_annotation_tables.sql  # annotations + model_comparisons 建表
 ├── params.yaml
 ├── dvc.yaml
 ├── pyproject.toml
 ├── Makefile
-└── requirements.in
+├── .env.example                       # 所有需要的环境变量模板
+└── requirements.in                    # pip-compile → requirements.txt
 ```
 
 ---
@@ -120,14 +142,18 @@ pet-annotation/
 ## 4. 配置设计（params.yaml）
 
 ```yaml
+database:
+  path: "/data/pet-data/pet_data.db"    # pet-data 的 SQLite 数据库路径
+  data_root: "/data/pet-data"            # 帧图像的根目录（frame_path 相对于此）
+
 annotation:
-  batch_size: 16
-  max_concurrent: 50
+  batch_size: 16                         # 每批拉取帧数
+  max_concurrent: 50                     # asyncio 最大并发 API 请求数（新增，DEVELOPMENT_GUIDE 未定义）
   max_daily_tokens: 10_000_000
   review_sampling_rate: 0.15
   low_confidence_threshold: 0.70
-  primary_model: "qwen2.5-vl-72b"
-  schema_version: "1.0"
+  primary_model: "qwen2.5-vl-72b"       # 主模型名（新增）
+  schema_version: "1.0"                  # 对应 pet-schema 版本（新增）
 
 models:
   qwen2.5-vl-72b:
@@ -253,6 +279,7 @@ auto_checked                pending                      sampling.py 决策后
   → needs_review            needs_review                 被抽中或 confidence < 阈值
     → reviewed              reviewed                     人工审核完成
   → rejected                rejected                     严重格式错误
+    → pending               （记录保留）                  rejected 帧回退为 pending 重新标注
 exported                    （不变）                      导出完成
 ```
 
@@ -260,7 +287,7 @@ exported                    （不变）                      导出完成
 
 ### 5.4 缓存机制
 
-`UNIQUE(frame_id, model_name, prompt_hash)` 即缓存键。`prompt_hash = sha256(system_prompt + user_prompt_template + schema_version)`。断点续跑查此索引，命中则跳过。prompt 内容变更（schema 升级）产生新 hash，自动重新打标。
+`UNIQUE(frame_id, model_name, prompt_hash)` 即缓存键。`prompt_hash = sha256(system_prompt 原文 + user_prompt Jinja2 模板原文 + schema_version)`。注意是**模板原文**而非渲染后的内容——few-shot 示例变更会改变渲染结果但不改变模板，此时不触发重新标注（few-shot 微调不影响已有标注质量）。schema_version 或 prompt 模板变更时产生新 hash，自动重新打标。
 
 ---
 
@@ -269,6 +296,9 @@ exported                    （不变）                      导出完成
 ### 6.1 BaseProvider
 
 ```python
+# pet_schema.render_prompt() 返回 tuple[str, str]，定义类型别名便于可读性
+PromptPair = tuple[str, str]  # (system_prompt, user_prompt)
+
 class BaseProvider(ABC):
     """所有 API Provider 的统一接口。"""
 
@@ -282,7 +312,11 @@ class BaseProvider(ABC):
         """是否支持原生 batch API。"""
 ```
 
+`PromptPair` 是 `tuple[str, str]` 的类型别名，与 `pet_schema.render_prompt()` 返回类型一致。
+
 `ProviderResult` dataclass：`raw_response`, `prompt_tokens`, `completion_tokens`, `latency_ms`。
+
+`VLLMProvider` 的 `key_env` 为空字符串时，Provider 跳过 Authorization header。
 
 ### 6.2 Provider 实现
 
@@ -481,9 +515,20 @@ stages:
     cmd: python -m pet_annotation.quality.auto_check
     deps:
       - src/pet_annotation/quality/
+      - reports/annotation_stats.json     # 依赖 annotate 阶段输出
     params:
       - annotation.review_sampling_rate
       - annotation.low_confidence_threshold
+
+  generate_pairs:
+    cmd: python -m pet_annotation.dpo.generate_pairs
+    deps:
+      - src/pet_annotation/dpo/generate_pairs.py
+      - src/pet_annotation/dpo/validate_pairs.py
+    params:
+      - dpo.min_pairs_per_release
+    outs:
+      - reports/dpo_pairs_stats.json
 
   export_sft:
     cmd: python -m pet_annotation.export.to_sharegpt
@@ -496,7 +541,7 @@ stages:
     cmd: python -m pet_annotation.export.to_dpo_pairs
     deps:
       - src/pet_annotation/export/to_dpo_pairs.py
-      - src/pet_annotation/dpo/validate_pairs.py
+      - reports/dpo_pairs_stats.json      # 依赖 generate_pairs 阶段
     outs:
       - exports/dpo_pairs.jsonl
 ```
@@ -545,6 +590,8 @@ def stats(): ...       # 进度统计
 
 ## 16. 依赖清单
 
+依赖管理：`requirements.in` 定义松约束 → `pip-compile` 生成精确锁定的 `requirements.txt`。
+
 ```
 pet-schema==1.0.0           # 固定 tag
 aiohttp>=3.9,<4.0           # 异步 HTTP
@@ -559,4 +606,24 @@ mypy                        # type check（dev）
 pytest>=7.0                 # test（dev）
 pytest-asyncio>=0.21        # async test（dev）
 aioresponses>=0.7           # mock（dev）
+```
+
+---
+
+## 17. .env.example
+
+```bash
+# pet-annotation 环境变量模板
+# 复制为 .env 并填入实际值，.env 已在 .gitignore 中
+
+# Qwen / 通义千问 API Keys
+QWEN_API_KEY_1=sk-xxx
+QWEN_API_KEY_2=sk-xxx
+
+# 豆包 / 火山引擎 API Keys
+DOUBAO_API_KEY_1=xxx
+
+# Label Studio
+LABEL_STUDIO_URL=http://localhost:8080
+LABEL_STUDIO_API_KEY=xxx
 ```
