@@ -534,6 +534,7 @@ stages:
     cmd: python -m pet_annotation.export.to_sharegpt
     deps:
       - src/pet_annotation/export/to_sharegpt.py
+      - reports/annotation_stats.json     # 依赖 annotate 阶段
     outs:
       - exports/sft_train.jsonl
 
