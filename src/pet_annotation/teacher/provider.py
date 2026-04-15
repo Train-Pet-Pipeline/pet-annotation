@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
-
 from pet_annotation.config import AnnotationConfig
 from pet_annotation.teacher.rate_tracker import RateTracker
 
