@@ -34,17 +34,17 @@ class AnnotationRecord:
     model_name: str
     prompt_hash: str
     raw_response: str
-    parsed_output: str | None
     schema_valid: int
-    validation_errors: str | None
-    confidence_overall: float | None
-    review_status: str
-    reviewer: str | None
-    review_notes: str | None
-    prompt_tokens: int | None
-    completion_tokens: int | None
-    total_tokens: int | None
-    api_latency_ms: int | None
+    parsed_output: str | None = None
+    validation_errors: str | None = None
+    confidence_overall: float | None = None
+    review_status: str = "pending"
+    reviewer: str | None = None
+    review_notes: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    api_latency_ms: int | None = None
 
 
 @dataclass
@@ -56,14 +56,14 @@ class ComparisonRecord:
     model_name: str
     prompt_hash: str
     raw_response: str
-    parsed_output: str | None
     schema_valid: int
-    validation_errors: str | None
-    confidence_overall: float | None
-    prompt_tokens: int | None
-    completion_tokens: int | None
-    total_tokens: int | None
-    api_latency_ms: int | None
+    parsed_output: str | None = None
+    validation_errors: str | None = None
+    confidence_overall: float | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    api_latency_ms: int | None = None
 
 
 class AnnotationStore:
@@ -377,7 +377,7 @@ class AnnotationStore:
         """
         return self._conn.execute(
             """
-            SELECT a.*, f.frame_path, f.video_id, f.species, f.breed
+            SELECT a.*, f.frame_path, f.video_id, f.source, f.species, f.breed
             FROM annotations a
             JOIN frames f ON a.frame_id = f.frame_id
             WHERE a.review_status IN ('approved', 'reviewed')
