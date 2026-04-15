@@ -54,6 +54,7 @@ select = [
 ]
 
 [tool.mypy]
+disable_error_code = ["import-untyped"]
 python_version = "3.11"
 strict = false
 ignore_missing_imports = true

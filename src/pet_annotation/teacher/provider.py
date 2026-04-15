@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 from pet_annotation.config import AnnotationConfig
 from pet_annotation.teacher.rate_tracker import RateTracker
@@ -120,7 +121,7 @@ class ProviderRegistry:
                 msg = f"Unknown provider type: '{model_cfg.provider}' for model '{model_name}'"
                 raise ValueError(msg)
 
-            provider = cls(
+            provider = cls(  # type: ignore[call-arg]
                 base_url=model_cfg.base_url,
                 model_name=model_cfg.model_name,
                 timeout=model_cfg.timeout,
