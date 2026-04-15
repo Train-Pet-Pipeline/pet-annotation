@@ -10,12 +10,7 @@ import time
 from pathlib import Path
 
 import aiohttp
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+from pet_infra.retry import standard_retry_async
 
 from pet_annotation.teacher.provider import BaseProvider, PromptPair, ProviderResult
 
@@ -42,12 +37,9 @@ class OpenAICompatProvider(BaseProvider):
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._max_retries = max_retries
         self._session: aiohttp.ClientSession | None = None
-        # E4: Dynamic retry wrapping using config's max_retries
-        self._call_api_with_retry = retry(
-            stop=stop_after_attempt(max_retries),
-            wait=wait_exponential(multiplier=1, min=2, max=30),
-            retry=retry_if_exception_type((aiohttp.ClientError, TimeoutError)),
-        )(self._call_api)
+        self._call_api_with_retry = standard_retry_async(
+            self._call_api, max_attempts=max_retries
+        )
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create the shared aiohttp session.

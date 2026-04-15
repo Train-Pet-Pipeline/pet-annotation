@@ -4,14 +4,13 @@ Loads params.yaml into validated Pydantic models and configures structured loggi
 """
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pet_infra.logging import setup_logging as _infra_setup_logging
 from pydantic import BaseModel
-from pythonjsonlogger import jsonlogger
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -119,26 +118,5 @@ def load_config(params_path: Path | None = None) -> AnnotationConfig:
 
 
 def setup_logging() -> None:
-    """Configure structured JSON logging on the root logger.
-
-    Fields emitted: timestamp, level, name, message.
-    Idempotent — calling multiple times has no additional effect on handlers.
-    """
-    root = logging.getLogger()
-    if any(isinstance(h, logging.StreamHandler) for h in root.handlers):
-        # Already configured; avoid duplicate handlers.
-        root.handlers.clear()
-
-    handler = logging.StreamHandler()
-    formatter = jsonlogger.JsonFormatter(
-        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
-        rename_fields={
-            "asctime": "timestamp",
-            "levelname": "level",
-            "name": "name",
-            "message": "message",
-        },
-    )
-    handler.setFormatter(formatter)
-    root.addHandler(handler)
-    root.setLevel(logging.INFO)
+    """Configure structured JSON logging."""
+    _infra_setup_logging("pet-annotation")

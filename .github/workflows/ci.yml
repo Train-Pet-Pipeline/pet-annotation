@@ -1,0 +1,51 @@
+# Standard CI — copy to each repo's .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  repository_dispatch:
+    types: [schema-updated]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Clone pet-infra for shared configs
+        uses: actions/checkout@v4
+        with:
+          repository: Train-Pet-Pipeline/pet-infra
+          path: ../pet-infra
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+
+      - name: Install dependencies
+        run: make setup
+
+      - name: Lint
+        run: make lint
+
+      - name: Detect GPU
+        id: gpu
+        run: |
+          if python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Test
+        run: |
+          if [ "${{ steps.gpu.outputs.available }}" = "true" ]; then
+            pytest tests/ -v --tb=short
+          else
+            pytest tests/ -v --tb=short -m "not gpu"
+          fi
