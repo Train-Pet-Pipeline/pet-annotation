@@ -1,3 +1,5 @@
+-include ../pet-infra/shared/Makefile.include
+
 .PHONY: setup test lint clean
 
 setup:
@@ -5,10 +7,3 @@ setup:
 
 test:
 	pytest tests/ -v --tb=short
-
-lint:
-	ruff check src/ tests/
-	mypy src/
-
-clean:
-	rm -rf .mypy_cache .pytest_cache __pycache__ *.egg-info dist build
