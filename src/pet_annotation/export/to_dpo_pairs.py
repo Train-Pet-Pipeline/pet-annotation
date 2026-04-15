@@ -14,6 +14,7 @@ def export_dpo_pairs(
     pairs: list[dict],
     output_path: Path,
     schema_version: str = "1.0",
+    data_root: str | None = None,
 ) -> int:
     """Export DPO pairs to JSONL.
 
@@ -23,6 +24,8 @@ def export_dpo_pairs(
         pairs: List of validated pair dicts from generate_pairs.
         output_path: Path to write the JSONL file.
         schema_version: Schema version for prompt rendering.
+        data_root: If provided, prepend to frame_path to create absolute
+            image paths.
 
     Returns:
         Number of pairs exported.
@@ -34,26 +37,28 @@ def export_dpo_pairs(
 
     with open(output_path, "w", encoding="utf-8") as f:
         for pair in pairs:
+            frame_path = pair.get("frame_path", "")
+            if data_root and frame_path:
+                frame_path = str(Path(data_root) / frame_path)
+
+            # LLaMA-Factory ShareGPT DPO format:
+            # - conversations: prompt turns (system + user)
+            # - chosen/rejected: single assistant response dict
             record = {
                 "id": f"dpo_{count:05d}",
-                "system": system_prompt,
-                "prompt": f"<image>\n{user_prompt}",
-                "images": [pair.get("frame_path", "")],
-                "chosen": [
-                    {"role": "user", "content": f"<image>\n{user_prompt}"},
-                    {
-                        "role": "assistant",
-                        "content": json.dumps(pair["chosen"], ensure_ascii=False),
-                    },
+                "conversations": [
+                    {"from": "system", "value": system_prompt},
+                    {"from": "human", "value": f"<image>\n{user_prompt}"},
                 ],
-                "rejected": [
-                    {"role": "user", "content": f"<image>\n{user_prompt}"},
-                    {
-                        "role": "assistant",
-                        "content": json.dumps(pair["rejected"], ensure_ascii=False),
-                    },
-                ],
-                "metadata": pair["metadata"],
+                "chosen": {
+                    "from": "gpt",
+                    "value": json.dumps(pair["chosen"], ensure_ascii=False),
+                },
+                "rejected": {
+                    "from": "gpt",
+                    "value": json.dumps(pair["rejected"], ensure_ascii=False),
+                },
+                "images": [frame_path],
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             count += 1

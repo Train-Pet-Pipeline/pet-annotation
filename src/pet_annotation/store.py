@@ -101,9 +101,12 @@ class AnnotationStore:
             self._conn = conn
             self._owns_conn = False
         else:
-            self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            self._conn = sqlite3.connect(
+                str(db_path), check_same_thread=False, timeout=30
+            )
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=10000")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._owns_conn = True
 
@@ -420,6 +423,39 @@ class AnnotationStore:
             """,
             (primary_model,),
         ).fetchall()
+
+    def fetch_needs_review_annotations(self) -> list[sqlite3.Row]:
+        """Return annotations with review_status='needs_review', joined to frames.
+
+        Used by Label Studio import to build review tasks.
+
+        Returns:
+            List of sqlite3.Row objects joining annotations and frames.
+        """
+        return self._conn.execute(
+            """
+            SELECT a.*, f.frame_path, f.data_root, f.species, f.breed
+            FROM annotations a
+            JOIN frames f ON a.frame_id = f.frame_id
+            WHERE a.review_status = 'needs_review'
+            ORDER BY a.created_at
+            """,
+        ).fetchall()
+
+    def update_annotation_parsed_output(
+        self, annotation_id: str, parsed_output: str
+    ) -> None:
+        """Overwrite parsed_output for an annotation (human correction).
+
+        Args:
+            annotation_id: Primary key of the annotation.
+            parsed_output: The corrected JSON output.
+        """
+        self._conn.execute(
+            "UPDATE annotations SET parsed_output=? WHERE annotation_id=?",
+            (parsed_output, annotation_id),
+        )
+        self._conn.commit()
 
     # ------------------------------------------------------------------
     # Review-status mutations

@@ -16,6 +16,7 @@ def export_sharegpt(
     store: AnnotationStore,
     output_path: Path,
     schema_version: str = "1.0",
+    data_root: str | None = None,
 ) -> int:
     """Export approved annotations to ShareGPT JSONL.
 
@@ -23,6 +24,8 @@ def export_sharegpt(
         store: AnnotationStore instance.
         output_path: Path to write the JSONL file.
         schema_version: Schema version for prompt rendering.
+        data_root: If provided, prepend to frame_path to create absolute
+            image paths.  Required for LLaMA-Factory to locate images.
 
     Returns:
         Number of records exported.
@@ -35,6 +38,10 @@ def export_sharegpt(
 
     with open(output_path, "w", encoding="utf-8") as f:
         for row in rows:
+            frame_path = row["frame_path"]
+            if data_root:
+                frame_path = str(Path(data_root) / frame_path)
+
             record = {
                 "id": f"sft_{count:05d}",
                 "conversations": [
@@ -42,7 +49,7 @@ def export_sharegpt(
                     {"from": "human", "value": f"<image>\n{user_prompt}"},
                     {"from": "gpt", "value": row["parsed_output"] or row["raw_response"]},
                 ],
-                "images": [row["frame_path"]],
+                "images": [frame_path],
                 "metadata": {
                     "source": row["source"],
                     "schema_version": schema_version,

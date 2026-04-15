@@ -83,7 +83,10 @@ def export_cmd(fmt, output, params):
         if fmt == "sft":
             from pet_annotation.export.to_sharegpt import export_sharegpt
             out = Path(output) if output else Path("exports/sft_train.jsonl")
-            count = export_sharegpt(store, out, config.annotation.schema_version)
+            count = export_sharegpt(
+                store, out, config.annotation.schema_version,
+                data_root=config.database.data_root,
+            )
             click.echo(f"Exported {count} SFT records to {out}")
 
         elif fmt == "dpo":
@@ -93,11 +96,78 @@ def export_cmd(fmt, output, params):
                 store, config.annotation.primary_model, config.annotation.schema_version
             )
             out = Path(output) if output else Path("exports/dpo_pairs.jsonl")
-            count = export_dpo_pairs(pairs, out, config.annotation.schema_version)
+            count = export_dpo_pairs(
+                pairs, out, config.annotation.schema_version,
+                data_root=config.database.data_root,
+            )
             click.echo(f"Exported {count} DPO pairs to {out}")
 
         elif fmt == "audio":
             click.echo("Audio label export not yet implemented")
+    finally:
+        store.close()
+
+
+@cli.command(name="ls-import")
+@click.option("--ls-url", default="http://localhost:8080", help="Label Studio URL")
+@click.option("--ls-key", envvar="LABEL_STUDIO_API_KEY", default=None, help="Label Studio API key")
+@click.option("--ls-email", envvar="LABEL_STUDIO_ADMIN_EMAIL", default=None, help="LS admin email")
+@click.option("--ls-password", envvar="LABEL_STUDIO_ADMIN_PASSWORD", default=None, help="LS admin password")
+@click.option("--params", default="params.yaml", type=click.Path(exists=True))
+def ls_import(ls_url, ls_key, ls_email, ls_password, params):
+    """Import needs_review annotations into Label Studio for human review."""
+    from pet_annotation.human_review.import_to_ls import import_needs_review
+    from pet_annotation.human_review.ls_auth import get_ls_session
+    from pet_annotation.store import AnnotationStore
+
+    if not ls_key and not (ls_email and ls_password):
+        click.echo(
+            "Error: provide --ls-key or both --ls-email and --ls-password "
+            "(or set LABEL_STUDIO_API_KEY / LABEL_STUDIO_ADMIN_EMAIL + "
+            "LABEL_STUDIO_ADMIN_PASSWORD env vars)",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    session = get_ls_session(ls_url, api_key=ls_key, email=ls_email, password=ls_password)
+
+    config = load_config(Path(params))
+    store = AnnotationStore(db_path=Path(config.database.path))
+    try:
+        count = import_needs_review(store, ls_url, session, data_root=config.database.data_root)
+        click.echo(f"Imported {count} tasks into Label Studio")
+    finally:
+        store.close()
+
+
+@cli.command(name="ls-export")
+@click.option("--ls-url", default="http://localhost:8080", help="Label Studio URL")
+@click.option("--ls-key", envvar="LABEL_STUDIO_API_KEY", default=None, help="Label Studio API key")
+@click.option("--ls-email", envvar="LABEL_STUDIO_ADMIN_EMAIL", default=None, help="LS admin email")
+@click.option("--ls-password", envvar="LABEL_STUDIO_ADMIN_PASSWORD", default=None, help="LS admin password")
+@click.option("--params", default="params.yaml", type=click.Path(exists=True))
+def ls_export(ls_url, ls_key, ls_email, ls_password, params):
+    """Pull reviewed annotations from Label Studio back to DB."""
+    from pet_annotation.human_review.export_from_ls import export_reviewed
+    from pet_annotation.human_review.ls_auth import get_ls_session
+    from pet_annotation.store import AnnotationStore
+
+    if not ls_key and not (ls_email and ls_password):
+        click.echo(
+            "Error: provide --ls-key or both --ls-email and --ls-password "
+            "(or set LABEL_STUDIO_API_KEY / LABEL_STUDIO_ADMIN_EMAIL + "
+            "LABEL_STUDIO_ADMIN_PASSWORD env vars)",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    session = get_ls_session(ls_url, api_key=ls_key, email=ls_email, password=ls_password)
+
+    config = load_config(Path(params))
+    store = AnnotationStore(db_path=Path(config.database.path))
+    try:
+        count = export_reviewed(store, ls_url, session)
+        click.echo(f"Updated {count} annotations from Label Studio")
     finally:
         store.close()
 
