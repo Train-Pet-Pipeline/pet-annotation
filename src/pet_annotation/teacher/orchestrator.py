@@ -6,6 +6,7 @@ validates results, writes to DB, and advances the annotation state machine.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import json
 import logging
@@ -73,6 +74,7 @@ class AnnotationOrchestrator:
         self._semaphore = asyncio.Semaphore(config.annotation.max_concurrent)
         self._db_executor = ThreadPoolExecutor(max_workers=1)
         self._shutdown = False
+        self._lock_file = None
 
     async def run(self) -> dict:
         """Main entry point: process all pending frames in batches.
@@ -81,6 +83,7 @@ class AnnotationOrchestrator:
             Stats dict with counts of processed/skipped/failed frames.
         """
         self._setup_signal_handlers()
+        self._acquire_process_lock()
         prompt = render_prompt(version=self._config.annotation.schema_version)
         prompt_hash = compute_prompt_hash(
             prompt[0], prompt[1], self._config.annotation.schema_version
@@ -136,6 +139,8 @@ class AnnotationOrchestrator:
                 logger.warning('{"event": "daily_limit_reached"}')
                 break
 
+        await self._registry.close()
+        self._release_process_lock()
         logger.info('{"event": "orchestrator_done", "stats": %s}', json.dumps(stats))
         return stats
 
@@ -244,41 +249,49 @@ class AnnotationOrchestrator:
 
             errors_json = json.dumps(validation.errors) if validation.errors else None
 
-            # Write to DB
-            if is_primary:
-                rec = AnnotationRecord(
-                    annotation_id=str(uuid.uuid4()),
-                    frame_id=frame_id,
-                    model_name=model_name,
-                    prompt_hash=prompt_hash,
-                    raw_response=result.raw_response,
-                    parsed_output=parsed,
-                    schema_valid=validation.valid,
-                    validation_errors=errors_json,
-                    confidence_overall=confidence,
-                    prompt_tokens=result.prompt_tokens,
-                    completion_tokens=result.completion_tokens,
-                    total_tokens=result.total_tokens,
-                    api_latency_ms=result.latency_ms,
+            # Write to DB — treat UNIQUE constraint as a late cache hit
+            # (can happen when frame status is reset but annotation exists)
+            try:
+                if is_primary:
+                    rec = AnnotationRecord(
+                        annotation_id=str(uuid.uuid4()),
+                        frame_id=frame_id,
+                        model_name=model_name,
+                        prompt_hash=prompt_hash,
+                        raw_response=result.raw_response,
+                        parsed_output=parsed,
+                        schema_valid=validation.valid,
+                        validation_errors=errors_json,
+                        confidence_overall=confidence,
+                        prompt_tokens=result.prompt_tokens,
+                        completion_tokens=result.completion_tokens,
+                        total_tokens=result.total_tokens,
+                        api_latency_ms=result.latency_ms,
+                    )
+                    await self._run_in_executor(self._store.insert_annotation, rec)
+                else:
+                    cmp_rec = ComparisonRecord(
+                        comparison_id=str(uuid.uuid4()),
+                        frame_id=frame_id,
+                        model_name=model_name,
+                        prompt_hash=prompt_hash,
+                        raw_response=result.raw_response,
+                        parsed_output=parsed,
+                        schema_valid=validation.valid,
+                        validation_errors=errors_json,
+                        confidence_overall=confidence,
+                        prompt_tokens=result.prompt_tokens,
+                        completion_tokens=result.completion_tokens,
+                        total_tokens=result.total_tokens,
+                        api_latency_ms=result.latency_ms,
+                    )
+                    await self._run_in_executor(self._store.insert_comparison, cmp_rec)
+            except sqlite3.IntegrityError:
+                logger.info(
+                    '{"event": "late_cache_hit", "frame_id": "%s", "model": "%s"}',
+                    frame_id, model_name,
                 )
-                await self._run_in_executor(self._store.insert_annotation, rec)
-            else:
-                cmp_rec = ComparisonRecord(
-                    comparison_id=str(uuid.uuid4()),
-                    frame_id=frame_id,
-                    model_name=model_name,
-                    prompt_hash=prompt_hash,
-                    raw_response=result.raw_response,
-                    parsed_output=parsed,
-                    schema_valid=validation.valid,
-                    validation_errors=errors_json,
-                    confidence_overall=confidence,
-                    prompt_tokens=result.prompt_tokens,
-                    completion_tokens=result.completion_tokens,
-                    total_tokens=result.total_tokens,
-                    api_latency_ms=result.latency_ms,
-                )
-                await self._run_in_executor(self._store.insert_comparison, cmp_rec)
+                return "skipped"
 
             logger.info(
                 '{"event": "annotated", "frame_id": "%s", "model": "%s", '
@@ -307,6 +320,12 @@ class AnnotationOrchestrator:
     async def _run_in_executor(self, fn, *args):
         """Run a sync function in the DB thread pool.
 
+        All DB writes are serialized through a single-thread executor.
+        The SQLite connection uses ``busy_timeout=10000`` to wait for
+        the database-level write lock (SQLite has no row-level locks).
+        A process-level file lock prevents concurrent annotate processes
+        from competing for the same database.
+
         Args:
             fn: Synchronous function to call.
             *args: Arguments to pass.
@@ -316,6 +335,37 @@ class AnnotationOrchestrator:
         """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._db_executor, fn, *args)
+
+    def _acquire_process_lock(self) -> None:
+        """Acquire an exclusive file lock to prevent concurrent annotate processes.
+
+        Raises:
+            RuntimeError: If another annotate process is already running.
+        """
+        lock_path = Path(self._config.database.path).with_suffix(".lock")
+        self._lock_file = open(lock_path, "w")  # noqa: SIM115
+        try:
+            fcntl.flock(self._lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._lock_file.write(str(uuid.uuid4()))
+            self._lock_file.flush()
+        except OSError:
+            self._lock_file.close()
+            self._lock_file = None
+            msg = (
+                f"Another annotate process is already running (lock: {lock_path}). "
+                "Only one annotate process may run at a time against the same database."
+            )
+            raise RuntimeError(msg)
+
+    def _release_process_lock(self) -> None:
+        """Release the process file lock."""
+        if self._lock_file is not None:
+            try:
+                fcntl.flock(self._lock_file, fcntl.LOCK_UN)
+                self._lock_file.close()
+            except OSError:
+                pass
+            self._lock_file = None
 
     def _setup_signal_handlers(self) -> None:
         """Register SIGINT/SIGTERM for graceful shutdown."""
@@ -333,3 +383,4 @@ class AnnotationOrchestrator:
         """Set shutdown flag to stop after current batch."""
         logger.info('{"event": "shutdown_requested"}')
         self._shutdown = True
+        self._release_process_lock()

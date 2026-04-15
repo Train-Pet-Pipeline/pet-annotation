@@ -145,3 +145,9 @@ class ProviderRegistry:
             List of (model_name, provider_instance, rate_tracker) tuples.
         """
         return [(name, p, t) for name, (p, t) in self._entries.items()]
+
+    async def close(self) -> None:
+        """Close all provider sessions."""
+        for _, (provider, _) in self._entries.items():
+            if hasattr(provider, "close"):
+                await provider.close()
