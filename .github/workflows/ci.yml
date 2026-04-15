@@ -20,18 +20,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Clone pet-infra for shared configs
-        uses: actions/checkout@v4
-        with:
-          repository: Train-Pet-Pipeline/pet-infra
-          path: ../pet-infra
-          token: ${{ secrets.CROSS_REPO_TOKEN }}
-
       - name: Install dependencies
-        run: make setup
+        run: pip install -e ".[dev]"
 
       - name: Lint
-        run: make lint
+        run: ruff check src/ tests/ && mypy src/
 
       - name: Detect GPU
         id: gpu
