@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = [
+    "setuptools>=68.0",
+]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -16,25 +18,43 @@ dependencies = [
     "label-studio-sdk>=1.0,<2.0",
     "dvc>=3.40,<4.0",
     "python-json-logger>=2.0,<3.0",
+    "pet-infra @ git+https://github.com/Train-Pet-Pipeline/pet-infra.git@v1.0.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "aioresponses>=0.7", "ruff", "mypy", "pip-tools"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "aioresponses>=0.7",
+    "ruff",
+    "mypy",
+    "pip-tools",
+]
 
 [project.scripts]
 pet-annotation = "pet_annotation.cli:cli"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = [
+    "src",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
+select = [
+    "E",
+    "F",
+    "I",
+    "N",
+    "W",
+    "UP",
+]
 
 [tool.mypy]
+disable_error_code = ["import-untyped"]
 python_version = "3.11"
 strict = false
 ignore_missing_imports = true

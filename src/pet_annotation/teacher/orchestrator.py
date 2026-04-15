@@ -171,10 +171,11 @@ class AnnotationOrchestrator:
         primary_idx = next(
             i for i, (n, _, _) in enumerate(self._registry.get_all()) if n == primary_name
         )
-        if isinstance(results[primary_idx], Exception):
-            raise results[primary_idx]
+        primary_result = results[primary_idx]
+        if isinstance(primary_result, BaseException):
+            raise primary_result
 
-        return results[primary_idx]
+        return primary_result  # type: ignore[return-value]
 
     async def _annotate_one(
         self,
@@ -262,7 +263,7 @@ class AnnotationOrchestrator:
                 )
                 await self._run_in_executor(self._store.insert_annotation, rec)
             else:
-                rec = ComparisonRecord(
+                cmp_rec = ComparisonRecord(
                     comparison_id=str(uuid.uuid4()),
                     frame_id=frame_id,
                     model_name=model_name,
@@ -277,7 +278,7 @@ class AnnotationOrchestrator:
                     total_tokens=result.total_tokens,
                     api_latency_ms=result.latency_ms,
                 )
-                await self._run_in_executor(self._store.insert_comparison, rec)
+                await self._run_in_executor(self._store.insert_comparison, cmp_rec)
 
             logger.info(
                 '{"event": "annotated", "frame_id": "%s", "model": "%s", '
