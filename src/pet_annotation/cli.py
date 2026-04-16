@@ -112,7 +112,10 @@ def export_cmd(fmt, output, params):
 @click.option("--ls-url", default="http://localhost:8080", help="Label Studio URL")
 @click.option("--ls-key", envvar="LABEL_STUDIO_API_KEY", default=None, help="Label Studio API key")
 @click.option("--ls-email", envvar="LABEL_STUDIO_ADMIN_EMAIL", default=None, help="LS admin email")
-@click.option("--ls-password", envvar="LABEL_STUDIO_ADMIN_PASSWORD", default=None, help="LS admin password")
+@click.option(
+    "--ls-password", envvar="LABEL_STUDIO_ADMIN_PASSWORD",
+    default=None, help="LS admin password",
+)
 @click.option("--params", default="params.yaml", type=click.Path(exists=True))
 def ls_import(ls_url, ls_key, ls_email, ls_password, params):
     """Import needs_review annotations into Label Studio for human review."""
@@ -144,7 +147,10 @@ def ls_import(ls_url, ls_key, ls_email, ls_password, params):
 @click.option("--ls-url", default="http://localhost:8080", help="Label Studio URL")
 @click.option("--ls-key", envvar="LABEL_STUDIO_API_KEY", default=None, help="Label Studio API key")
 @click.option("--ls-email", envvar="LABEL_STUDIO_ADMIN_EMAIL", default=None, help="LS admin email")
-@click.option("--ls-password", envvar="LABEL_STUDIO_ADMIN_PASSWORD", default=None, help="LS admin password")
+@click.option(
+    "--ls-password", envvar="LABEL_STUDIO_ADMIN_PASSWORD",
+    default=None, help="LS admin password",
+)
 @click.option("--params", default="params.yaml", type=click.Path(exists=True))
 def ls_export(ls_url, ls_key, ls_email, ls_password, params):
     """Pull reviewed annotations from Label Studio back to DB."""
