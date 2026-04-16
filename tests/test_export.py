@@ -71,6 +71,10 @@ class TestExportDPO:
         assert count == 1
 
         line = json.loads(out.read_text().strip())
-        assert line["chosen"][1]["role"] == "assistant"
-        assert line["rejected"][1]["role"] == "assistant"
+        # LLaMA-Factory ShareGPT DPO format: chosen/rejected are single dicts
+        assert line["chosen"]["from"] == "gpt"
+        assert line["rejected"]["from"] == "gpt"
         assert "frames/001.jpg" in line["images"]
+        # Conversations should have system + human prompt turns
+        assert line["conversations"][0]["from"] == "system"
+        assert line["conversations"][1]["from"] == "human"
