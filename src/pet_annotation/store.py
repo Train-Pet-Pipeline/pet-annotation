@@ -122,7 +122,14 @@ class AnnotationStore:
         individually.  ``ALTER TABLE … ADD COLUMN`` statements that fail with
         ``duplicate column name`` are silently skipped so that re-opening an
         already-migrated database is safe.
+
+        Note: Migration files must not contain triggers or other BEGIN/END blocks;
+        the semicolon split is not parser-aware and will break on embedded semicolons
+        inside string literals or trigger bodies.
         """
+        if not _MIGRATIONS_DIR.exists():
+            raise RuntimeError(f"Migrations directory not found: {_MIGRATIONS_DIR}")
+
         for sql_file in sorted(_MIGRATIONS_DIR.glob("*.sql")):
             sql = sql_file.read_text()
             for stmt in sql.split(";"):
