@@ -20,9 +20,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-_MIGRATION_SQL = (
-    Path(__file__).parent.parent.parent / "migrations" / "001_create_annotation_tables.sql"
-)
+_MIGRATIONS_DIR = Path(__file__).parent.parent.parent / "migrations"
 
 
 @dataclass
@@ -118,17 +116,42 @@ class AnnotationStore:
     # ------------------------------------------------------------------
 
     def _apply_migration(self) -> None:
-        """Run the annotation DDL migration (idempotent)."""
-        if _MIGRATION_SQL.exists():
-            self._conn.executescript(_MIGRATION_SQL.read_text())
+        """Run all annotation DDL migrations in sorted order (idempotent).
+
+        Globs ``migrations/*.sql`` sorted by filename and applies each statement
+        individually.  ``ALTER TABLE … ADD COLUMN`` statements that fail with
+        ``duplicate column name`` are silently skipped so that re-opening an
+        already-migrated database is safe.
+        """
+        for sql_file in sorted(_MIGRATIONS_DIR.glob("*.sql")):
+            sql = sql_file.read_text()
+            for stmt in sql.split(";"):
+                stmt = stmt.strip()
+                if not stmt:
+                    continue
+                try:
+                    self._conn.execute(stmt)
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" in str(e).lower():
+                        continue
+                    raise
         self._conn.commit()
 
     def _recover_stuck_frames(self) -> None:
-        """Reset frames stuck in 'annotating' back to 'pending' on startup."""
-        self._conn.execute(
-            "UPDATE frames SET annotation_status='pending' WHERE annotation_status='annotating'"
-        )
-        self._conn.commit()
+        """Reset frames stuck in 'annotating' back to 'pending' on startup.
+
+        Silently skips if the frames table does not yet exist (e.g. standalone
+        annotation-only databases used in tests).
+        """
+        try:
+            self._conn.execute(
+                "UPDATE frames SET annotation_status='pending' WHERE annotation_status='annotating'"
+            )
+            self._conn.commit()
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e).lower():
+                return
+            raise
 
     # ------------------------------------------------------------------
     # Frame queries
