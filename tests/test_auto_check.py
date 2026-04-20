@@ -1,4 +1,5 @@
 """Tests for auto_check module."""
+
 from __future__ import annotations
 
 import uuid
@@ -10,8 +11,7 @@ from pet_annotation.store import AnnotationRecord, AnnotationStore
 def _insert_frame(conn, frame_id: str = "f1"):
     """Insert a minimal frame row."""
     conn.execute(
-        "INSERT INTO frames (frame_id, video_id, source, frame_path, data_root) "
-        "VALUES (?,?,?,?,?)",
+        "INSERT INTO frames (frame_id, video_id, source, frame_path, data_root) VALUES (?,?,?,?,?)",
         (frame_id, "v1", "selfshot", "f.jpg", "/data"),
     )
     conn.commit()
@@ -23,9 +23,13 @@ class TestAutoCheck:
         store = AnnotationStore(conn=db_conn)
         _insert_frame(db_conn, "f1")
         rec = AnnotationRecord(
-            annotation_id=str(uuid.uuid4()), frame_id="f1",
-            model_name="primary", prompt_hash="h1", raw_response="{}",
-            schema_valid=True, confidence_overall=0.90,
+            annotation_id=str(uuid.uuid4()),
+            frame_id="f1",
+            model_name="primary",
+            prompt_hash="h1",
+            raw_response="{}",
+            schema_valid=True,
+            confidence_overall=0.90,
         )
         store.insert_annotation(rec)
         store.update_frame_status_batch(["f1"], "auto_checked")
@@ -40,9 +44,13 @@ class TestAutoCheck:
         store = AnnotationStore(conn=db_conn)
         _insert_frame(db_conn, "f1")
         rec = AnnotationRecord(
-            annotation_id=str(uuid.uuid4()), frame_id="f1",
-            model_name="primary", prompt_hash="h1", raw_response="{}",
-            schema_valid=True, confidence_overall=0.50,
+            annotation_id=str(uuid.uuid4()),
+            frame_id="f1",
+            model_name="primary",
+            prompt_hash="h1",
+            raw_response="{}",
+            schema_valid=True,
+            confidence_overall=0.50,
         )
         store.insert_annotation(rec)
         store.update_frame_status_batch(["f1"], "auto_checked")

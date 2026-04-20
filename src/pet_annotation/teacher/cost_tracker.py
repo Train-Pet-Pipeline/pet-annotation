@@ -1,4 +1,5 @@
 """Daily token budget tracker — stops annotation when limit is reached."""
+
 from __future__ import annotations
 
 import logging

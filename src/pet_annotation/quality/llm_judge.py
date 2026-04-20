@@ -5,6 +5,7 @@ When both models agree on key fields (pet_present, species, action.primary),
 the annotation is considered consistent. Disagreements flag the annotation
 for human review.
 """
+
 from __future__ import annotations
 
 import logging

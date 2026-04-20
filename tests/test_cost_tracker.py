@@ -1,4 +1,5 @@
 """Tests for CostTracker."""
+
 from __future__ import annotations
 
 from pet_annotation.teacher.cost_tracker import CostTracker

@@ -14,20 +14,21 @@ Usage (tests)::
 
     store = AnnotationStore(conn=in_memory_conn)
 """
+
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-_MIGRATION_SQL = (
-    Path(__file__).parent.parent.parent / "migrations" / "001_create_annotation_tables.sql"
-)
+import pet_schema
+
+_MIGRATIONS_DIR = Path(__file__).parent.parent.parent / "migrations"
 
 
 @dataclass
-class AnnotationRecord:
-    """Represents one row in the annotations table."""
+class VisionAnnotationRow:
+    """Represents one row in the annotations (vision) table."""
 
     annotation_id: str
     frame_id: str
@@ -45,6 +46,23 @@ class AnnotationRecord:
     completion_tokens: int | None = None
     total_tokens: int | None = None
     api_latency_ms: int | None = None
+    modality: str = "vision"
+    storage_uri: str | None = None
+
+
+@dataclass
+class AudioAnnotationRow:
+    """Represents one row in the audio_annotations table."""
+
+    annotation_id: str
+    sample_id: str
+    annotator_type: str
+    annotator_id: str
+    predicted_class: str
+    class_probs: str
+    modality: str = "audio"
+    schema_version: str = field(default_factory=lambda: pet_schema.SCHEMA_VERSION)
+    logits: str | None = None
 
 
 @dataclass
@@ -64,6 +82,7 @@ class ComparisonRecord:
     completion_tokens: int | None = None
     total_tokens: int | None = None
     api_latency_ms: int | None = None
+    modality: str = "vision"
 
 
 class AnnotationStore:
@@ -101,9 +120,7 @@ class AnnotationStore:
             self._conn = conn
             self._owns_conn = False
         else:
-            self._conn = sqlite3.connect(
-                str(db_path), check_same_thread=False, timeout=30
-            )
+            self._conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=30)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA busy_timeout=10000")
@@ -118,9 +135,32 @@ class AnnotationStore:
     # ------------------------------------------------------------------
 
     def _apply_migration(self) -> None:
-        """Run the annotation DDL migration (idempotent)."""
-        if _MIGRATION_SQL.exists():
-            self._conn.executescript(_MIGRATION_SQL.read_text())
+        """Run all annotation DDL migrations in sorted order (idempotent).
+
+        Globs ``migrations/*.sql`` sorted by filename and applies each statement
+        individually.  ``ALTER TABLE … ADD COLUMN`` statements that fail with
+        ``duplicate column name`` are silently skipped so that re-opening an
+        already-migrated database is safe.
+
+        Note: Migration files must not contain triggers or other BEGIN/END blocks;
+        the semicolon split is not parser-aware and will break on embedded semicolons
+        inside string literals or trigger bodies.
+        """
+        if not _MIGRATIONS_DIR.exists():
+            raise RuntimeError(f"Migrations directory not found: {_MIGRATIONS_DIR}")
+
+        for sql_file in sorted(_MIGRATIONS_DIR.glob("*.sql")):
+            sql = sql_file.read_text()
+            for stmt in sql.split(";"):
+                stmt = stmt.strip()
+                if not stmt:
+                    continue
+                try:
+                    self._conn.execute(stmt)
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" in str(e).lower():
+                        continue
+                    raise
         self._conn.commit()
 
     def _recover_stuck_frames(self) -> None:
@@ -204,53 +244,118 @@ class AnnotationStore:
     # Insert helpers
     # ------------------------------------------------------------------
 
-    def insert_annotation(self, rec: AnnotationRecord) -> None:
-        """Insert one row into the annotations table.
+    def insert_annotation(self, rec: VisionAnnotationRow | AudioAnnotationRow) -> None:
+        """Insert one row into the annotations or audio_annotations table.
+
+        Routes based on the record type:
+        - VisionAnnotationRow → inserts into ``annotations`` table.
+        - AudioAnnotationRow → inserts into ``audio_annotations`` table.
 
         Args:
-            rec: The AnnotationRecord to persist.
+            rec: The VisionAnnotationRow or AudioAnnotationRow to persist.
         """
-        self._conn.execute(
-            """
-            INSERT INTO annotations (
-                annotation_id, frame_id, model_name, prompt_hash,
-                raw_response, parsed_output, schema_valid, validation_errors,
-                confidence_overall, review_status, reviewer, review_notes,
-                prompt_tokens, completion_tokens, total_tokens, api_latency_ms
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                rec.annotation_id, rec.frame_id, rec.model_name, rec.prompt_hash,
-                rec.raw_response, rec.parsed_output, rec.schema_valid, rec.validation_errors,
-                rec.confidence_overall, rec.review_status, rec.reviewer, rec.review_notes,
-                rec.prompt_tokens, rec.completion_tokens, rec.total_tokens, rec.api_latency_ms,
-            ),
-        )
+        if isinstance(rec, AudioAnnotationRow):
+            self._conn.execute(
+                """
+                INSERT INTO audio_annotations (
+                    annotation_id, sample_id, annotator_type, annotator_id,
+                    modality, schema_version, predicted_class, class_probs, logits
+                ) VALUES (?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    rec.annotation_id,
+                    rec.sample_id,
+                    rec.annotator_type,
+                    rec.annotator_id,
+                    rec.modality,
+                    rec.schema_version,
+                    rec.predicted_class,
+                    rec.class_probs,
+                    rec.logits,
+                ),
+            )
+        else:
+            self._conn.execute(
+                """
+                INSERT INTO annotations (
+                    annotation_id, frame_id, model_name, prompt_hash,
+                    raw_response, parsed_output, schema_valid, validation_errors,
+                    confidence_overall, review_status, reviewer, review_notes,
+                    prompt_tokens, completion_tokens, total_tokens, api_latency_ms,
+                    modality, storage_uri
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    rec.annotation_id,
+                    rec.frame_id,
+                    rec.model_name,
+                    rec.prompt_hash,
+                    rec.raw_response,
+                    rec.parsed_output,
+                    rec.schema_valid,
+                    rec.validation_errors,
+                    rec.confidence_overall,
+                    rec.review_status,
+                    rec.reviewer,
+                    rec.review_notes,
+                    rec.prompt_tokens,
+                    rec.completion_tokens,
+                    rec.total_tokens,
+                    rec.api_latency_ms,
+                    rec.modality,
+                    rec.storage_uri,
+                ),
+            )
         self._conn.commit()
 
     def insert_annotation_and_update_status(
-        self, rec: AnnotationRecord, new_status: str
+        self, rec: VisionAnnotationRow, new_status: str
     ) -> None:
         """Atomically insert an annotation and update the frame's annotation_status.
 
+        Vision-only operation.  Raises ValueError if given an AudioAnnotationRow.
+
         Args:
-            rec: The AnnotationRecord to persist.
+            rec: The VisionAnnotationRow to persist.
             new_status: The annotation_status value to set on the parent frame.
+
+        Raises:
+            ValueError: If *rec* is an AudioAnnotationRow.
         """
+        if isinstance(rec, AudioAnnotationRow):
+            raise ValueError(
+                "insert_annotation_and_update_status is vision-only;"
+                " use insert_annotation for audio"
+            )
         self._conn.execute(
             """
             INSERT INTO annotations (
                 annotation_id, frame_id, model_name, prompt_hash,
                 raw_response, parsed_output, schema_valid, validation_errors,
                 confidence_overall, review_status, reviewer, review_notes,
-                prompt_tokens, completion_tokens, total_tokens, api_latency_ms
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                prompt_tokens, completion_tokens, total_tokens, api_latency_ms,
+                modality, storage_uri
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                rec.annotation_id, rec.frame_id, rec.model_name, rec.prompt_hash,
-                rec.raw_response, rec.parsed_output, rec.schema_valid, rec.validation_errors,
-                rec.confidence_overall, rec.review_status, rec.reviewer, rec.review_notes,
-                rec.prompt_tokens, rec.completion_tokens, rec.total_tokens, rec.api_latency_ms,
+                rec.annotation_id,
+                rec.frame_id,
+                rec.model_name,
+                rec.prompt_hash,
+                rec.raw_response,
+                rec.parsed_output,
+                rec.schema_valid,
+                rec.validation_errors,
+                rec.confidence_overall,
+                rec.review_status,
+                rec.reviewer,
+                rec.review_notes,
+                rec.prompt_tokens,
+                rec.completion_tokens,
+                rec.total_tokens,
+                rec.api_latency_ms,
+                rec.modality,
+                rec.storage_uri,
             ),
         )
         self._conn.execute(
@@ -270,14 +375,25 @@ class AnnotationStore:
             INSERT INTO model_comparisons (
                 comparison_id, frame_id, model_name, prompt_hash,
                 raw_response, parsed_output, schema_valid, validation_errors,
-                confidence_overall, prompt_tokens, completion_tokens, total_tokens, api_latency_ms
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                confidence_overall, prompt_tokens, completion_tokens, total_tokens, api_latency_ms,
+                modality
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                rec.comparison_id, rec.frame_id, rec.model_name, rec.prompt_hash,
-                rec.raw_response, rec.parsed_output, rec.schema_valid, rec.validation_errors,
-                rec.confidence_overall, rec.prompt_tokens, rec.completion_tokens,
-                rec.total_tokens, rec.api_latency_ms,
+                rec.comparison_id,
+                rec.frame_id,
+                rec.model_name,
+                rec.prompt_hash,
+                rec.raw_response,
+                rec.parsed_output,
+                rec.schema_valid,
+                rec.validation_errors,
+                rec.confidence_overall,
+                rec.prompt_tokens,
+                rec.completion_tokens,
+                rec.total_tokens,
+                rec.api_latency_ms,
+                rec.modality,
             ),
         )
         self._conn.commit()
@@ -287,28 +403,64 @@ class AnnotationStore:
     # ------------------------------------------------------------------
 
     def get_annotation(
-        self, frame_id: str, model_name: str, prompt_hash: str
-    ) -> AnnotationRecord | None:
-        """Retrieve an annotation by its cache key triple.
+        self,
+        key: str,
+        model_name: str | None = None,
+        prompt_hash: str | None = None,
+        *,
+        modality: str = "vision",
+    ) -> VisionAnnotationRow | AudioAnnotationRow | None:
+        """Retrieve an annotation by its lookup key and modality.
+
+        For vision annotations *key* is the frame_id and *model_name* +
+        *prompt_hash* are also required.  For audio annotations *key* is the
+        sample_id and the other parameters are unused.
 
         Args:
-            frame_id: The frame identifier.
-            model_name: The model that produced the annotation.
-            prompt_hash: Hash of the prompt used.
+            key: frame_id (vision) or sample_id (audio).
+            model_name: Model name — required for vision, ignored for audio.
+            prompt_hash: Prompt hash — required for vision, ignored for audio.
+            modality: One of ``"vision"`` or ``"audio"``.
 
         Returns:
-            An AnnotationRecord, or None if not found.
+            A VisionAnnotationRow or AudioAnnotationRow, or None if not found.
+
+        Raises:
+            ValueError: If modality is ``"vision"`` and model_name or prompt_hash
+                is None.
         """
+        if modality == "audio":
+            row = self._conn.execute(
+                "SELECT * FROM audio_annotations WHERE sample_id=?",
+                (key,),
+            ).fetchone()
+            if row is None:
+                return None
+            return AudioAnnotationRow(
+                annotation_id=row["annotation_id"],
+                sample_id=row["sample_id"],
+                annotator_type=row["annotator_type"],
+                annotator_id=row["annotator_id"],
+                predicted_class=row["predicted_class"],
+                class_probs=row["class_probs"],
+                modality=row["modality"],
+                schema_version=row["schema_version"],
+                logits=row["logits"],
+            )
+
+        # vision path
+        if model_name is None or prompt_hash is None:
+            raise ValueError("model_name and prompt_hash are required for vision modality")
         row = self._conn.execute(
             """
             SELECT * FROM annotations
             WHERE frame_id=? AND model_name=? AND prompt_hash=?
             """,
-            (frame_id, model_name, prompt_hash),
+            (key, model_name, prompt_hash),
         ).fetchone()
         if row is None:
             return None
-        return AnnotationRecord(
+        return VisionAnnotationRow(
             annotation_id=row["annotation_id"],
             frame_id=row["frame_id"],
             model_name=row["model_name"],
@@ -325,6 +477,8 @@ class AnnotationStore:
             completion_tokens=row["completion_tokens"],
             total_tokens=row["total_tokens"],
             api_latency_ms=row["api_latency_ms"],
+            modality=row["modality"],
+            storage_uri=row["storage_uri"],
         )
 
     def get_comparison(
@@ -363,17 +517,21 @@ class AnnotationStore:
             completion_tokens=row["completion_tokens"],
             total_tokens=row["total_tokens"],
             api_latency_ms=row["api_latency_ms"],
+            modality=row["modality"],
         )
 
     # ------------------------------------------------------------------
     # Reporting / pipeline queries
     # ------------------------------------------------------------------
 
-    def fetch_approved_annotations(self, limit: int) -> list[sqlite3.Row]:
+    def fetch_approved_annotations(
+        self, limit: int, *, modality: str = "vision"
+    ) -> list[sqlite3.Row]:
         """Return annotations with review_status in ('approved', 'reviewed'), joined to frames.
 
         Args:
             limit: Maximum number of rows to return.
+            modality: Filter rows to this modality (default ``"vision"``).
 
         Returns:
             List of sqlite3.Row objects joining annotations and frames.
@@ -384,23 +542,49 @@ class AnnotationStore:
             FROM annotations a
             JOIN frames f ON a.frame_id = f.frame_id
             WHERE a.review_status IN ('approved', 'reviewed')
+              AND a.modality = ?
             LIMIT ?
             """,
+            (modality, limit),
+        ).fetchall()
+
+    def fetch_audio_annotations(self, limit: int | None = None) -> list[sqlite3.Row]:
+        """Return rows from audio_annotations, optionally capped by limit.
+
+        The audio_annotations table has no review_status column, so all rows
+        are returned.  The caller (to_audio_labels.py) is responsible for
+        filtering or post-processing if needed.
+
+        Args:
+            limit: Maximum number of rows to return.  ``None`` means no cap.
+
+        Returns:
+            List of sqlite3.Row objects from the audio_annotations table.
+        """
+        if limit is None:
+            return self._conn.execute(
+                "SELECT * FROM audio_annotations ORDER BY created_at",
+            ).fetchall()
+        return self._conn.execute(
+            "SELECT * FROM audio_annotations ORDER BY created_at LIMIT ?",
             (limit,),
         ).fetchall()
 
-    def fetch_comparisons_for_frame(self, frame_id: str) -> list[sqlite3.Row]:
-        """Return all comparison rows for a given frame.
+    def fetch_comparisons_for_frame(
+        self, frame_id: str, *, modality: str = "vision"
+    ) -> list[sqlite3.Row]:
+        """Return comparison rows for a given frame filtered by modality.
 
         Args:
             frame_id: The frame to look up comparisons for.
+            modality: Filter rows to this modality (default ``"vision"``).
 
         Returns:
             List of sqlite3.Row objects from model_comparisons.
         """
         return self._conn.execute(
-            "SELECT * FROM model_comparisons WHERE frame_id=? ORDER BY created_at",
-            (frame_id,),
+            "SELECT * FROM model_comparisons WHERE frame_id=? AND modality=? ORDER BY created_at",
+            (frame_id, modality),
         ).fetchall()
 
     def fetch_auto_checked_annotations(self, primary_model: str) -> list[sqlite3.Row]:
@@ -442,9 +626,7 @@ class AnnotationStore:
             """,
         ).fetchall()
 
-    def update_annotation_parsed_output(
-        self, annotation_id: str, parsed_output: str
-    ) -> None:
+    def update_annotation_parsed_output(self, annotation_id: str, parsed_output: str) -> None:
         """Overwrite parsed_output for an annotation (human correction).
 
         Args:
@@ -548,3 +730,11 @@ class AnnotationStore:
     def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         """Close the store on context manager exit."""
         self.close()
+
+
+# ---------------------------------------------------------------------------
+# Back-compat alias — keeps existing orchestrator / export code unmodified
+# ---------------------------------------------------------------------------
+
+#: Alias for VisionAnnotationRow.  Retained for backward compatibility.
+AnnotationRecord = VisionAnnotationRow

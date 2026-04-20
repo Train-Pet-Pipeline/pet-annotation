@@ -3,6 +3,7 @@
 Pulls pending frames, dispatches to all configured models concurrently,
 validates results, writes to DB, and advances the annotation state machine.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +16,7 @@ import sqlite3
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TextIO
 
 from pet_schema.renderer import render_prompt
 from pet_schema.validator import validate_output
@@ -74,7 +76,7 @@ class AnnotationOrchestrator:
         self._semaphore = asyncio.Semaphore(config.annotation.max_concurrent)
         self._db_executor = ThreadPoolExecutor(max_workers=1)
         self._shutdown = False
-        self._lock_file = None
+        self._lock_file: TextIO | None = None
 
     async def run(self) -> dict:
         """Main entry point: process all pending frames in batches.
@@ -94,9 +96,7 @@ class AnnotationOrchestrator:
         failed_ids: set[str] = set()
 
         while not self._shutdown:
-            frames = await self._run_in_executor(
-                self._store.fetch_pending_frames, batch_size
-            )
+            frames = await self._run_in_executor(self._store.fetch_pending_frames, batch_size)
             # Filter out frames that already failed in this run to avoid retry loops
             frames = [f for f in frames if f["frame_id"] not in failed_ids]
             if not frames:
@@ -117,7 +117,8 @@ class AnnotationOrchestrator:
                 if isinstance(result, Exception):
                     logger.error(
                         '{"event": "frame_failed", "frame_id": "%s", "error": "%s"}',
-                        fid, str(result),
+                        fid,
+                        str(result),
                     )
                     await self._run_in_executor(
                         self._store.update_frame_status_batch, [fid], "pending"
@@ -144,9 +145,7 @@ class AnnotationOrchestrator:
         logger.info('{"event": "orchestrator_done", "stats": %s}', json.dumps(stats))
         return stats
 
-    async def _process_frame(
-        self, frame: sqlite3.Row, prompt: PromptPair, prompt_hash: str
-    ) -> str:
+    async def _process_frame(self, frame: sqlite3.Row, prompt: PromptPair, prompt_hash: str) -> str:
         """Process a single frame across all configured models.
 
         Args:
@@ -165,8 +164,14 @@ class AnnotationOrchestrator:
             is_primary = name == primary_name
             tasks.append(
                 self._annotate_one(
-                    frame["frame_id"], name, provider, tracker,
-                    image_path, prompt, prompt_hash, is_primary,
+                    frame["frame_id"],
+                    name,
+                    provider,
+                    tracker,
+                    image_path,
+                    prompt,
+                    prompt_hash,
+                    is_primary,
                 )
             )
 
@@ -289,15 +294,19 @@ class AnnotationOrchestrator:
             except sqlite3.IntegrityError:
                 logger.info(
                     '{"event": "late_cache_hit", "frame_id": "%s", "model": "%s"}',
-                    frame_id, model_name,
+                    frame_id,
+                    model_name,
                 )
                 return "skipped"
 
             logger.info(
                 '{"event": "annotated", "frame_id": "%s", "model": "%s", '
                 '"valid": %s, "tokens": %d, "latency_ms": %d}',
-                frame_id, model_name, str(validation.valid).lower(),
-                result.total_tokens, result.latency_ms,
+                frame_id,
+                model_name,
+                str(validation.valid).lower(),
+                result.total_tokens,
+                result.latency_ms,
             )
             return "processed"
 

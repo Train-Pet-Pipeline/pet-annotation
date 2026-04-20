@@ -8,5 +8,6 @@ build/
 *.pyc
 .env
 *.db
+*.lock
 exports/
 reports/

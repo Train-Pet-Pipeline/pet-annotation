@@ -1,0 +1,26 @@
+defaults:
+  - /_global_/defaults
+  - /dataset@_global_.dataset: vision_annotations
+  - _self_
+
+recipe:
+  recipe_id: pet_annotation_vision
+  description: "pet-annotation smoke recipe — just loads the dataset plugin"
+  scope: single_repo
+  owner_repo: pet-annotation
+  schema_version: "2.0.0"
+  stages:
+    - name: load
+      component_registry: evaluators
+      component_type: pet_infra.noop_evaluator
+      inputs:
+        dataset:
+          ref_type: dataset
+          ref_value: ${dataset.type}
+      config_path: experiment/pet_annotation_vision
+      depends_on: []
+  variations: []
+  produces: []
+  default_storage: local
+  required_plugins:
+    - pet_annotation

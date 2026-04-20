@@ -1,4 +1,5 @@
 """Tests for Provider abstraction and OpenAICompatProvider."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -65,8 +66,11 @@ class TestOpenAICompatProvider:
         }
         try:
             with aioresponses() as m:
-                m.post("http://test-api.example.com/v1/chat/completions", payload=mock_response,
-                       repeat=True)
+                m.post(
+                    "http://test-api.example.com/v1/chat/completions",
+                    payload=mock_response,
+                    repeat=True,
+                )
                 await provider.annotate(str(sample_image), prompt, api_key="sk-test")
                 # Verify the request was made (aioresponses tracks calls)
                 assert len(m.requests) == 1

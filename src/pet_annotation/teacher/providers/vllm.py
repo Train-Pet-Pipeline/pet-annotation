@@ -2,6 +2,7 @@
 
 Uses OpenAI-compatible API served by vLLM. Skips auth when key is empty.
 """
+
 from __future__ import annotations
 
 from pet_annotation.teacher.provider import PromptPair, ProviderResult
@@ -34,9 +35,7 @@ class VLLMProvider(OpenAICompatProvider):
         """
         super().__init__(base_url, model_name, timeout, max_retries)
 
-    async def annotate(
-        self, image_path: str, prompt: PromptPair, api_key: str
-    ) -> ProviderResult:
+    async def annotate(self, image_path: str, prompt: PromptPair, api_key: str) -> ProviderResult:
         """Send a single frame for annotation via vLLM endpoint.
 
         Skips Authorization header when api_key is empty (local deployment).

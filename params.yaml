@@ -10,6 +10,7 @@ annotation:
   low_confidence_threshold: 0.70
   primary_model: "qwen2.5-vl-72b"
   schema_version: "1.0"
+  modality_default: vision
 
 models:
   qwen2.5-vl-72b:
