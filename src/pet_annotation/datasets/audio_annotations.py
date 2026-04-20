@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal
 
+import pet_schema
 from pet_infra.base.dataset import BaseDataset
 from pet_infra.registry import DATASETS
 from pet_schema.annotations import BaseAnnotation
@@ -55,7 +56,7 @@ class AudioAnnotationsDataset(BaseDataset):
                     predicted_class=row_dict["predicted_class"],
                     class_probs=row_dict["class_probs"],
                     modality=row_dict.get("modality", "audio"),
-                    schema_version=row_dict.get("schema_version"),
+                    schema_version=row_dict.get("schema_version") or pet_schema.SCHEMA_VERSION,
                     logits=row_dict.get("logits"),
                 )
                 yield audio_row_to_annotation(ra)
