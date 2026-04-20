@@ -1,0 +1,4 @@
+type: pet_annotation.audio_annotations
+modality: audio
+args:
+  db_path: ${oc.env:PET_ANNOTATION_DB,/data/pet-annotation/pet_annotation.db}
