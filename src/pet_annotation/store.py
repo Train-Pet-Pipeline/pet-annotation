@@ -17,8 +17,10 @@ Usage (tests)::
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+import pet_schema
 
 _MIGRATIONS_DIR = Path(__file__).parent.parent.parent / "migrations"
 
@@ -58,7 +60,7 @@ class AudioAnnotationRow:
     predicted_class: str
     class_probs: str
     modality: str = "audio"
-    schema_version: str = "2.0.0"
+    schema_version: str = field(default_factory=lambda: pet_schema.SCHEMA_VERSION)
     logits: str | None = None
 
 
@@ -381,6 +383,10 @@ class AnnotationStore:
 
         Returns:
             A VisionAnnotationRow or AudioAnnotationRow, or None if not found.
+
+        Raises:
+            ValueError: If modality is ``"vision"`` and model_name or prompt_hash
+                is None.
         """
         if modality == "audio":
             row = self._conn.execute(
@@ -402,6 +408,10 @@ class AnnotationStore:
             )
 
         # vision path
+        if model_name is None or prompt_hash is None:
+            raise ValueError(
+                "model_name and prompt_hash are required for vision modality"
+            )
         row = self._conn.execute(
             """
             SELECT * FROM annotations
@@ -468,6 +478,7 @@ class AnnotationStore:
             completion_tokens=row["completion_tokens"],
             total_tokens=row["total_tokens"],
             api_latency_ms=row["api_latency_ms"],
+            modality=row["modality"],
         )
 
     # ------------------------------------------------------------------

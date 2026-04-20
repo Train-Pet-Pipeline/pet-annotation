@@ -426,3 +426,24 @@ def test_insert_comparison_writes_modality_column(db_conn: sqlite3.Connection) -
     assert db_row is not None
     assert db_row["modality"] == "vision"
     store.close()
+
+
+def test_get_comparison_returns_stored_modality(db_conn: sqlite3.Connection) -> None:
+    """get_comparison populates modality from the DB row, not the dataclass default."""
+    _insert_frame(db_conn, "f1")
+    store = AnnotationStore(conn=db_conn)
+    rec = ComparisonRecord(
+        comparison_id="cmp-modal-read",
+        frame_id="f1",
+        model_name="gpt-4o",
+        prompt_hash="hash-modal",
+        raw_response='{"ok": true}',
+        schema_valid=1,
+        modality="vision",
+    )
+    store.insert_comparison(rec)
+
+    got = store.get_comparison("f1", "gpt-4o", "hash-modal")
+    assert got is not None
+    assert got.modality == "vision"
+    store.close()

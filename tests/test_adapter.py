@@ -191,3 +191,22 @@ def test_audio_row_round_trip_schema_version() -> None:
     row = _make_audio_row()
     result = audio_row_to_annotation(row)
     assert result.schema_version == "2.0.0"
+
+
+# ---------------------------------------------------------------------------
+# Tests — exception handling (B4 code-review fixes)
+# ---------------------------------------------------------------------------
+
+
+def test_vision_row_to_annotation_raises_on_malformed_json() -> None:
+    """vision_row_to_annotation raises ValueError when parsed_output is malformed JSON."""
+    row = _make_vision_row(parsed_output="{not valid json")
+    with pytest.raises(ValueError, match="invalid JSON or schema mismatch"):
+        vision_row_to_annotation(row)
+
+
+def test_audio_row_to_annotation_raises_on_malformed_class_probs() -> None:
+    """audio_row_to_annotation raises ValueError when class_probs is malformed JSON."""
+    row = _make_audio_row(class_probs="{not valid json")
+    with pytest.raises(ValueError, match="invalid JSON"):
+        audio_row_to_annotation(row)

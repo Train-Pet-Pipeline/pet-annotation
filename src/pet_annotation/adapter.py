@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 import pet_schema
 from pet_schema.models import PetFeederEvent
+from pydantic import ValidationError
 
 from pet_annotation.store import AudioAnnotationRow, VisionAnnotationRow
 
@@ -28,17 +29,26 @@ def vision_row_to_annotation(row: VisionAnnotationRow) -> pet_schema.VisionAnnot
     - ``modality``      → ``"vision"`` (Literal)
     - ``annotator_type`` is always ``"vlm"`` for VLM-generated rows.
     - ``created_at`` defaults to the current UTC time (not stored in the row).
-    - ``schema_version`` defaults to ``"2.0.0"``.
+    - ``schema_version`` is read from ``pet_schema.SCHEMA_VERSION``.
 
     Args:
         row: A VisionAnnotationRow read from the annotations table.
 
     Returns:
         A pet_schema.VisionAnnotation populated from the row.
+
+    Raises:
+        ValueError: If parsed_output/raw_response is malformed JSON or fails
+            PetFeederEvent schema validation.
     """
     source = row.parsed_output if row.parsed_output is not None else row.raw_response
-    parsed_dict = json.loads(source)
-    parsed = PetFeederEvent(**parsed_dict)
+    try:
+        parsed_dict = json.loads(source)
+        parsed = PetFeederEvent(**parsed_dict)
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise ValueError(
+            f"Cannot convert row {row.annotation_id!r}: invalid JSON or schema mismatch"
+        ) from exc
 
     return pet_schema.VisionAnnotation(
         annotation_id=row.annotation_id,
@@ -47,7 +57,7 @@ def vision_row_to_annotation(row: VisionAnnotationRow) -> pet_schema.VisionAnnot
         annotator_id=row.model_name,
         modality="vision",
         created_at=datetime.now(UTC),
-        schema_version="2.0.0",
+        schema_version=pet_schema.SCHEMA_VERSION,
         raw_response=row.raw_response,
         parsed=parsed,
         prompt_hash=row.prompt_hash,
@@ -65,9 +75,22 @@ def audio_row_to_annotation(row: AudioAnnotationRow) -> pet_schema.AudioAnnotati
 
     Returns:
         A pet_schema.AudioAnnotation populated from the row.
+
+    Raises:
+        ValueError: If class_probs or logits contain malformed JSON.
     """
-    class_probs: dict[str, float] = json.loads(row.class_probs)
-    logits: list[float] | None = json.loads(row.logits) if row.logits is not None else None
+    try:
+        class_probs: dict[str, float] = json.loads(row.class_probs)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Cannot convert row {row.annotation_id!r}: invalid JSON in class_probs"
+        ) from exc
+    try:
+        logits: list[float] | None = json.loads(row.logits) if row.logits is not None else None
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Cannot convert row {row.annotation_id!r}: invalid JSON in logits"
+        ) from exc
 
     return pet_schema.AudioAnnotation(
         annotation_id=row.annotation_id,
