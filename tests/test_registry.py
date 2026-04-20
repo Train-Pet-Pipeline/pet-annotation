@@ -1,4 +1,5 @@
 """Tests for ProviderRegistry."""
+
 from __future__ import annotations
 
 import pytest
@@ -21,21 +22,31 @@ def config() -> AnnotationConfig:
     return AnnotationConfig(
         database=DatabaseConfig(path=":memory:", data_root="/tmp"),
         annotation=AnnotationParams(
-            batch_size=8, max_concurrent=10, max_daily_tokens=1000,
-            review_sampling_rate=0.15, low_confidence_threshold=0.70,
-            primary_model="model-a", schema_version="1.0",
+            batch_size=8,
+            max_concurrent=10,
+            max_daily_tokens=1000,
+            review_sampling_rate=0.15,
+            low_confidence_threshold=0.70,
+            primary_model="model-a",
+            schema_version="1.0",
         ),
         models={
             "model-a": ModelConfig(
-                provider="openai_compat", base_url="http://a/v1", model_name="a",
+                provider="openai_compat",
+                base_url="http://a/v1",
+                model_name="a",
                 accounts=[AccountConfig(key_env="K1", rpm=10, tpm=1000)],
             ),
             "model-b": ModelConfig(
-                provider="doubao", base_url="http://b/v1", model_name="b",
+                provider="doubao",
+                base_url="http://b/v1",
+                model_name="b",
                 accounts=[AccountConfig(key_env="K2", rpm=10, tpm=1000)],
             ),
             "model-c": ModelConfig(
-                provider="vllm", base_url="http://c/v1", model_name="c",
+                provider="vllm",
+                base_url="http://c/v1",
+                model_name="c",
                 accounts=[AccountConfig(key_env="", rpm=999, tpm=999999)],
             ),
         },
@@ -72,11 +83,14 @@ class TestProviderRegistry:
         config = AnnotationConfig(
             database=DatabaseConfig(path=":memory:", data_root="/tmp"),
             annotation=AnnotationParams(
-                primary_model="bad", schema_version="1.0",
+                primary_model="bad",
+                schema_version="1.0",
             ),
             models={
                 "bad": ModelConfig(
-                    provider="unknown_type", base_url="http://x", model_name="x",
+                    provider="unknown_type",
+                    base_url="http://x",
+                    model_name="x",
                     accounts=[AccountConfig(key_env="K", rpm=1, tpm=1)],
                 ),
             },

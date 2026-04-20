@@ -1,4 +1,5 @@
 """Tests for migration globbing and idempotency (Task B2)."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -30,9 +31,7 @@ def _column_names(store: AnnotationStore, table: str) -> set[str]:
 
 def _index_names(store: AnnotationStore) -> set[str]:
     """Return all index names from sqlite_master."""
-    rows = store._conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index'"
-    ).fetchall()
+    rows = store._conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
     return {row[0] for row in rows}
 
 

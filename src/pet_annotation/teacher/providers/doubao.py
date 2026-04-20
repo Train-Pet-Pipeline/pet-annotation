@@ -2,6 +2,7 @@
 
 Uses the Volcengine ARK API which is OpenAI-compatible with minor differences.
 """
+
 from __future__ import annotations
 
 from pet_annotation.teacher.providers.openai_compat import OpenAICompatProvider

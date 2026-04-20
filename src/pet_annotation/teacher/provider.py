@@ -1,4 +1,5 @@
 """Provider abstraction for VLM API annotation."""
+
 from __future__ import annotations
 
 import logging
@@ -41,9 +42,7 @@ class BaseProvider(ABC):
     """
 
     @abstractmethod
-    async def annotate(
-        self, image_path: str, prompt: PromptPair, api_key: str
-    ) -> ProviderResult:
+    async def annotate(self, image_path: str, prompt: PromptPair, api_key: str) -> ProviderResult:
         """Send a single frame for annotation.
 
         Args:

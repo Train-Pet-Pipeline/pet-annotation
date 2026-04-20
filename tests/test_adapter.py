@@ -1,4 +1,5 @@
 """Tests for pet_annotation.adapter — VisionAnnotationRow / AudioAnnotationRow round-trips."""
+
 from __future__ import annotations
 
 import json

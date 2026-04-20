@@ -1,4 +1,5 @@
 """Tests for DPO modality filtering (B13)."""
+
 from __future__ import annotations
 
 import json
@@ -163,16 +164,32 @@ def test_generate_cross_model_pairs_default_modality_is_vision(
     _insert_frame(conn, "f-audio")
 
     # Vision annotation + comparison → should produce a pair
-    _insert_annotation(conn, "f-vision", "ann-vision", modality="vision",
-                       review_status="approved", model_name="gpt-4o", confidence=0.95)
-    _insert_comparison(conn, "f-vision", "cmp-vision", modality="vision",
-                       model_name="claude-3", confidence=0.80)
+    _insert_annotation(
+        conn,
+        "f-vision",
+        "ann-vision",
+        modality="vision",
+        review_status="approved",
+        model_name="gpt-4o",
+        confidence=0.95,
+    )
+    _insert_comparison(
+        conn, "f-vision", "cmp-vision", modality="vision", model_name="claude-3", confidence=0.80
+    )
 
     # Audio annotation + comparison → should NOT appear in output
-    _insert_annotation(conn, "f-audio", "ann-audio", modality="audio",
-                       review_status="approved", model_name="gpt-4o", confidence=0.95)
-    _insert_comparison(conn, "f-audio", "cmp-audio", modality="audio",
-                       model_name="claude-3", confidence=0.80)
+    _insert_annotation(
+        conn,
+        "f-audio",
+        "ann-audio",
+        modality="audio",
+        review_status="approved",
+        model_name="gpt-4o",
+        confidence=0.95,
+    )
+    _insert_comparison(
+        conn, "f-audio", "cmp-audio", modality="audio", model_name="claude-3", confidence=0.80
+    )
 
     store = AnnotationStore(conn=conn)
     try:

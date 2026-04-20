@@ -1,4 +1,5 @@
 """Tests for CLI modality dispatch (Task B11)."""
+
 from __future__ import annotations
 
 import textwrap
@@ -120,11 +121,14 @@ class TestExportModalityDispatch:
         """export --format=sft without --modality uses vision path (export_sharegpt called)."""
         runner = CliRunner()
         out_path = str(tmp_path / "sft.jsonl")
-        with patch(
-            "pet_annotation.export.to_sharegpt.export_sharegpt",
-            return_value=0,
-        ) as mock_sft, patch(
-            "pet_annotation.store.AnnotationStore",
+        with (
+            patch(
+                "pet_annotation.export.to_sharegpt.export_sharegpt",
+                return_value=0,
+            ) as mock_sft,
+            patch(
+                "pet_annotation.store.AnnotationStore",
+            ),
         ):
             result = runner.invoke(
                 cli,
@@ -182,14 +186,18 @@ class TestLsImportModalityDispatch:
     def test_ls_import_vision_passes_modality(self, params_file: Path) -> None:
         """ls-import --modality=vision passes modality=vision to import_needs_review."""
         runner = CliRunner()
-        with patch(
-            "pet_annotation.human_review.import_to_ls.import_needs_review",
-            return_value=0,
-        ) as mock_import, patch(
-            "pet_annotation.human_review.ls_auth.get_ls_session",
-            return_value=None,
-        ), patch(
-            "pet_annotation.store.AnnotationStore",
+        with (
+            patch(
+                "pet_annotation.human_review.import_to_ls.import_needs_review",
+                return_value=0,
+            ) as mock_import,
+            patch(
+                "pet_annotation.human_review.ls_auth.get_ls_session",
+                return_value=None,
+            ),
+            patch(
+                "pet_annotation.store.AnnotationStore",
+            ),
         ):
             result = runner.invoke(
                 cli,
@@ -228,14 +236,18 @@ class TestLsExportModalityDispatch:
     def test_ls_export_vision_works(self, params_file: Path) -> None:
         """ls-export --modality=vision calls export_reviewed (vision path)."""
         runner = CliRunner()
-        with patch(
-            "pet_annotation.human_review.export_from_ls.export_reviewed",
-            return_value=0,
-        ), patch(
-            "pet_annotation.human_review.ls_auth.get_ls_session",
-            return_value=None,
-        ), patch(
-            "pet_annotation.store.AnnotationStore",
+        with (
+            patch(
+                "pet_annotation.human_review.export_from_ls.export_reviewed",
+                return_value=0,
+            ),
+            patch(
+                "pet_annotation.human_review.ls_auth.get_ls_session",
+                return_value=None,
+            ),
+            patch(
+                "pet_annotation.store.AnnotationStore",
+            ),
         ):
             result = runner.invoke(
                 cli,

@@ -1,4 +1,5 @@
 """Tests for human_review.templates module."""
+
 import pytest
 
 from pet_annotation.human_review.templates import template_for

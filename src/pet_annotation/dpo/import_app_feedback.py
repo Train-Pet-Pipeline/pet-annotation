@@ -4,6 +4,7 @@ Post-launch feature: pulls feeding_events with user_feedback='inaccurate'
 from cloud sync, creates Label Studio tasks for human confirmation. Requires
 the cloud sync backend and APP feedback API to be deployed.
 """
+
 from __future__ import annotations
 
 import logging

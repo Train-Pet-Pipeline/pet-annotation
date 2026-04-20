@@ -1,4 +1,5 @@
 """Tests for DPO pair generation."""
+
 from __future__ import annotations
 
 import uuid
@@ -49,19 +50,29 @@ class TestGenerateCrossModelPairs:
         store = AnnotationStore(conn=db_conn)
         _insert_frame(db_conn, "f1")
 
-        store.insert_annotation(AnnotationRecord(
-            annotation_id=str(uuid.uuid4()), frame_id="f1",
-            model_name="primary", prompt_hash="h1",
-            raw_response=VALID_OUTPUT.format(conf="0.90", narrative="Primary annotation."),
-            schema_valid=True, confidence_overall=0.90,
-            review_status="approved",
-        ))
-        store.insert_comparison(ComparisonRecord(
-            comparison_id=str(uuid.uuid4()), frame_id="f1",
-            model_name="secondary", prompt_hash="h1",
-            raw_response=VALID_OUTPUT.format(conf="0.70", narrative="Secondary annotation."),
-            schema_valid=True, confidence_overall=0.70,
-        ))
+        store.insert_annotation(
+            AnnotationRecord(
+                annotation_id=str(uuid.uuid4()),
+                frame_id="f1",
+                model_name="primary",
+                prompt_hash="h1",
+                raw_response=VALID_OUTPUT.format(conf="0.90", narrative="Primary annotation."),
+                schema_valid=True,
+                confidence_overall=0.90,
+                review_status="approved",
+            )
+        )
+        store.insert_comparison(
+            ComparisonRecord(
+                comparison_id=str(uuid.uuid4()),
+                frame_id="f1",
+                model_name="secondary",
+                prompt_hash="h1",
+                raw_response=VALID_OUTPUT.format(conf="0.70", narrative="Secondary annotation."),
+                schema_valid=True,
+                confidence_overall=0.70,
+            )
+        )
 
         pairs = generate_cross_model_pairs(store, primary_model="primary")
         assert len(pairs) == 1
@@ -73,19 +84,29 @@ class TestGenerateCrossModelPairs:
         store = AnnotationStore(conn=db_conn)
         _insert_frame(db_conn, "f1")
 
-        store.insert_annotation(AnnotationRecord(
-            annotation_id=str(uuid.uuid4()), frame_id="f1",
-            model_name="primary", prompt_hash="h1",
-            raw_response=VALID_OUTPUT.format(conf="0.60", narrative="Primary low."),
-            schema_valid=True, confidence_overall=0.60,
-            review_status="approved",
-        ))
-        store.insert_comparison(ComparisonRecord(
-            comparison_id=str(uuid.uuid4()), frame_id="f1",
-            model_name="secondary", prompt_hash="h1",
-            raw_response=VALID_OUTPUT.format(conf="0.90", narrative="Secondary high."),
-            schema_valid=True, confidence_overall=0.90,
-        ))
+        store.insert_annotation(
+            AnnotationRecord(
+                annotation_id=str(uuid.uuid4()),
+                frame_id="f1",
+                model_name="primary",
+                prompt_hash="h1",
+                raw_response=VALID_OUTPUT.format(conf="0.60", narrative="Primary low."),
+                schema_valid=True,
+                confidence_overall=0.60,
+                review_status="approved",
+            )
+        )
+        store.insert_comparison(
+            ComparisonRecord(
+                comparison_id=str(uuid.uuid4()),
+                frame_id="f1",
+                model_name="secondary",
+                prompt_hash="h1",
+                raw_response=VALID_OUTPUT.format(conf="0.90", narrative="Secondary high."),
+                schema_valid=True,
+                confidence_overall=0.90,
+            )
+        )
 
         pairs = generate_cross_model_pairs(store, primary_model="primary")
         assert len(pairs) == 0

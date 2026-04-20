@@ -1,4 +1,5 @@
 """Tests for AnnotationOrchestrator."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -23,13 +24,19 @@ def _make_config(db_path: str = ":memory:") -> AnnotationConfig:
     return AnnotationConfig(
         database=DatabaseConfig(path=db_path, data_root="/data"),
         annotation=AnnotationParams(
-            batch_size=2, max_concurrent=5, max_daily_tokens=100000,
-            review_sampling_rate=0.0, low_confidence_threshold=0.70,
-            primary_model="primary", schema_version="1.0",
+            batch_size=2,
+            max_concurrent=5,
+            max_daily_tokens=100000,
+            review_sampling_rate=0.0,
+            low_confidence_threshold=0.70,
+            primary_model="primary",
+            schema_version="1.0",
         ),
         models={
             "primary": ModelConfig(
-                provider="openai_compat", base_url="http://a/v1", model_name="a",
+                provider="openai_compat",
+                base_url="http://a/v1",
+                model_name="a",
                 accounts=[AccountConfig(key_env="K1", rpm=100, tpm=999999)],
             ),
         },
@@ -69,7 +76,9 @@ class TestOrchestrator:
 
         mock_result = ProviderResult(
             raw_response=MOCK_RAW_RESPONSE,
-            prompt_tokens=100, completion_tokens=50, latency_ms=500,
+            prompt_tokens=100,
+            completion_tokens=50,
+            latency_ms=500,
         )
 
         # Mock validate_output to return valid
@@ -90,9 +99,7 @@ class TestOrchestrator:
                 ):
                     await orch.run()
 
-        rows = db_conn.execute(
-            "SELECT annotation_status FROM frames ORDER BY frame_id"
-        ).fetchall()
+        rows = db_conn.execute("SELECT annotation_status FROM frames ORDER BY frame_id").fetchall()
         assert all(r[0] == "auto_checked" for r in rows)
 
     async def test_skips_cached_frames(self, db_conn):
@@ -102,14 +109,16 @@ class TestOrchestrator:
         _insert_frames(db_conn, 1)
 
         # Pre-insert a cached annotation
-        store.insert_annotation(AnnotationRecord(
-            annotation_id=str(uuid.uuid4()),
-            frame_id="frame_000",
-            model_name="primary",
-            prompt_hash="test_hash",
-            raw_response="{}",
-            schema_valid=True,
-        ))
+        store.insert_annotation(
+            AnnotationRecord(
+                annotation_id=str(uuid.uuid4()),
+                frame_id="frame_000",
+                model_name="primary",
+                prompt_hash="test_hash",
+                raw_response="{}",
+                schema_valid=True,
+            )
+        )
 
         call_count = 0
 

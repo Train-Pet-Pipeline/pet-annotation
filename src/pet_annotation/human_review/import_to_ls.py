@@ -3,6 +3,7 @@
 Pre-fills VLM output as predictions so reviewers see the model's answer
 and can quickly confirm or correct.
 """
+
 from __future__ import annotations
 
 import json
@@ -44,9 +45,7 @@ def _ensure_project(
     resp.raise_for_status()
     for proj in resp.json().get("results", []):
         proj_title = proj["title"]
-        if proj_title == new_title or (
-            modality == "vision" and proj_title == legacy_title
-        ):
+        if proj_title == new_title or (modality == "vision" and proj_title == legacy_title):
             project_id = proj["id"]
             _ensure_local_storage(ls_url, session, project_id, data_root)
             return project_id
@@ -62,7 +61,8 @@ def _ensure_project(
     project_id = resp.json()["id"]
     logger.info(
         '{"event": "ls_project_created", "project_id": %d, "modality": "%s"}',
-        project_id, modality,
+        project_id,
+        modality,
     )
 
     _ensure_local_storage(ls_url, session, project_id, data_root)
@@ -70,7 +70,10 @@ def _ensure_project(
 
 
 def _ensure_local_storage(
-    ls_url: str, session: requests.Session, project_id: int, data_root: str,
+    ls_url: str,
+    session: requests.Session,
+    project_id: int,
+    data_root: str,
 ) -> None:
     """Create a local file storage connection if one doesn't exist.
 
@@ -107,12 +110,14 @@ def _ensure_local_storage(
     if resp.ok:
         logger.info(
             '{"event": "ls_storage_created", "project_id": %d, "path": "%s"}',
-            project_id, frames_path,
+            project_id,
+            frames_path,
         )
     else:
         logger.warning(
             '{"event": "ls_storage_failed", "status": %d, "detail": "%s"}',
-            resp.status_code, resp.text[:200],
+            resp.status_code,
+            resp.text[:200],
         )
 
 
@@ -144,9 +149,7 @@ def import_needs_review(
         ValueError: If modality is not a recognised value.
     """
     if modality == "audio":
-        raise NotImplementedError(
-            "audio review flow pending B7+ — audio fetch logic not yet wired"
-        )
+        raise NotImplementedError("audio review flow pending B7+ — audio fetch logic not yet wired")
     if modality not in ("vision",):
         raise ValueError(f"Unknown modality: {modality!r}")
 
@@ -171,16 +174,18 @@ def import_needs_review(
         except (json.JSONDecodeError, TypeError):
             pass
 
-        tasks.append({
-            "data": {
-                "image_url": f"/data/local-files/?d={frame_path}",
-                "vlm_output": vlm_output,
-                "species": row["species"] if row["species"] else "unknown",
-                "annotation_id": row["annotation_id"],
-                "frame_id": row["frame_id"],
-                "model_name": row["model_name"],
-            },
-        })
+        tasks.append(
+            {
+                "data": {
+                    "image_url": f"/data/local-files/?d={frame_path}",
+                    "vlm_output": vlm_output,
+                    "species": row["species"] if row["species"] else "unknown",
+                    "annotation_id": row["annotation_id"],
+                    "frame_id": row["frame_id"],
+                    "model_name": row["model_name"],
+                },
+            }
+        )
 
     # Bulk import tasks
     resp = session.post(
@@ -193,6 +198,7 @@ def import_needs_review(
 
     logger.info(
         '{"event": "ls_tasks_imported", "count": %d, "project_id": %d}',
-        created, project_id,
+        created,
+        project_id,
     )
     return created

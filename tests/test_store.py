@@ -1,4 +1,5 @@
 """Tests for AnnotationStore (TDD)."""
+
 from __future__ import annotations
 
 import json
@@ -31,8 +32,9 @@ def _insert_frame(conn: sqlite3.Connection, frame_id: str, status: str = "pendin
     conn.commit()
 
 
-def _make_annotation(frame_id: str = "f1", model_name: str = "gpt-4o",
-                     prompt_hash: str = "abc123") -> AnnotationRecord:
+def _make_annotation(
+    frame_id: str = "f1", model_name: str = "gpt-4o", prompt_hash: str = "abc123"
+) -> AnnotationRecord:
     """Build a minimal AnnotationRecord."""
     return AnnotationRecord(
         annotation_id=f"ann-{frame_id}-{model_name}",
@@ -54,8 +56,9 @@ def _make_annotation(frame_id: str = "f1", model_name: str = "gpt-4o",
     )
 
 
-def _make_comparison(frame_id: str = "f1", model_name: str = "gpt-4o",
-                     prompt_hash: str = "abc123") -> ComparisonRecord:
+def _make_comparison(
+    frame_id: str = "f1", model_name: str = "gpt-4o", prompt_hash: str = "abc123"
+) -> ComparisonRecord:
     """Build a minimal ComparisonRecord."""
     return ComparisonRecord(
         comparison_id=f"cmp-{frame_id}-{model_name}",
@@ -84,9 +87,7 @@ def test_init_creates_tables(db_conn: sqlite3.Connection) -> None:
     store = AnnotationStore(conn=db_conn)
     tables = {
         row[0]
-        for row in db_conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        for row in db_conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     assert "annotations" in tables
     assert "model_comparisons" in tables
@@ -167,9 +168,7 @@ def test_update_annotation_status_atomic(db_conn: sqlite3.Connection) -> None:
     # annotation inserted
     assert store.cache_hit("f1", "gpt-4o", "abc123") is True
     # frame status updated
-    row = db_conn.execute(
-        "SELECT annotation_status FROM frames WHERE frame_id='f1'"
-    ).fetchone()
+    row = db_conn.execute("SELECT annotation_status FROM frames WHERE frame_id='f1'").fetchone()
     assert row["annotation_status"] == "annotating"
     store.close()
 
@@ -182,9 +181,7 @@ def test_recover_annotating_on_init(db_conn: sqlite3.Connection) -> None:
 
     AnnotationStore(conn=db_conn).close()
 
-    rows = db_conn.execute(
-        "SELECT frame_id, annotation_status FROM frames"
-    ).fetchall()
+    rows = db_conn.execute("SELECT frame_id, annotation_status FROM frames").fetchall()
     status_map = {r["frame_id"]: r["annotation_status"] for r in rows}
     assert status_map["stuck1"] == "pending"
     assert status_map["stuck2"] == "pending"
@@ -200,18 +197,21 @@ def test_fetch_approved_annotations(db_conn: sqlite3.Connection) -> None:
     store = AnnotationStore(conn=db_conn)
 
     rec_app = _make_annotation("f-app", prompt_hash="h1")
-    rec_app = AnnotationRecord(**{**rec_app.__dict__, "annotation_id": "ann-app",
-                                  "review_status": "approved"})
+    rec_app = AnnotationRecord(
+        **{**rec_app.__dict__, "annotation_id": "ann-app", "review_status": "approved"}
+    )
     store.insert_annotation(rec_app)
 
     rec_rev = _make_annotation("f-rev", prompt_hash="h2")
-    rec_rev = AnnotationRecord(**{**rec_rev.__dict__, "annotation_id": "ann-rev",
-                                  "review_status": "reviewed"})
+    rec_rev = AnnotationRecord(
+        **{**rec_rev.__dict__, "annotation_id": "ann-rev", "review_status": "reviewed"}
+    )
     store.insert_annotation(rec_rev)
 
     rec_pen = _make_annotation("f-pen", prompt_hash="h3")
-    rec_pen = AnnotationRecord(**{**rec_pen.__dict__, "annotation_id": "ann-pen",
-                                  "review_status": "pending"})
+    rec_pen = AnnotationRecord(
+        **{**rec_pen.__dict__, "annotation_id": "ann-pen", "review_status": "pending"}
+    )
     store.insert_annotation(rec_pen)
 
     rows = store.fetch_approved_annotations(limit=10)
@@ -228,9 +228,7 @@ def test_insert_annotation_modality_default(db_conn: sqlite3.Connection) -> None
     store = AnnotationStore(conn=db_conn)
     store.insert_annotation(_make_annotation("f1"))
 
-    row = db_conn.execute(
-        "SELECT modality FROM annotations WHERE frame_id='f1'"
-    ).fetchone()
+    row = db_conn.execute("SELECT modality FROM annotations WHERE frame_id='f1'").fetchone()
     assert row is not None
     assert row["modality"] == "vision"
     store.close()

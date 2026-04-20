@@ -14,6 +14,7 @@ Usage (tests)::
 
     store = AnnotationStore(conn=in_memory_conn)
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -119,9 +120,7 @@ class AnnotationStore:
             self._conn = conn
             self._owns_conn = False
         else:
-            self._conn = sqlite3.connect(
-                str(db_path), check_same_thread=False, timeout=30
-            )
+            self._conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=30)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA busy_timeout=10000")
@@ -264,9 +263,15 @@ class AnnotationStore:
                 ) VALUES (?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    rec.annotation_id, rec.sample_id, rec.annotator_type, rec.annotator_id,
-                    rec.modality, rec.schema_version, rec.predicted_class,
-                    rec.class_probs, rec.logits,
+                    rec.annotation_id,
+                    rec.sample_id,
+                    rec.annotator_type,
+                    rec.annotator_id,
+                    rec.modality,
+                    rec.schema_version,
+                    rec.predicted_class,
+                    rec.class_probs,
+                    rec.logits,
                 ),
             )
         else:
@@ -281,11 +286,24 @@ class AnnotationStore:
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    rec.annotation_id, rec.frame_id, rec.model_name, rec.prompt_hash,
-                    rec.raw_response, rec.parsed_output, rec.schema_valid, rec.validation_errors,
-                    rec.confidence_overall, rec.review_status, rec.reviewer, rec.review_notes,
-                    rec.prompt_tokens, rec.completion_tokens, rec.total_tokens, rec.api_latency_ms,
-                    rec.modality, rec.storage_uri,
+                    rec.annotation_id,
+                    rec.frame_id,
+                    rec.model_name,
+                    rec.prompt_hash,
+                    rec.raw_response,
+                    rec.parsed_output,
+                    rec.schema_valid,
+                    rec.validation_errors,
+                    rec.confidence_overall,
+                    rec.review_status,
+                    rec.reviewer,
+                    rec.review_notes,
+                    rec.prompt_tokens,
+                    rec.completion_tokens,
+                    rec.total_tokens,
+                    rec.api_latency_ms,
+                    rec.modality,
+                    rec.storage_uri,
                 ),
             )
         self._conn.commit()
@@ -320,11 +338,24 @@ class AnnotationStore:
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                rec.annotation_id, rec.frame_id, rec.model_name, rec.prompt_hash,
-                rec.raw_response, rec.parsed_output, rec.schema_valid, rec.validation_errors,
-                rec.confidence_overall, rec.review_status, rec.reviewer, rec.review_notes,
-                rec.prompt_tokens, rec.completion_tokens, rec.total_tokens, rec.api_latency_ms,
-                rec.modality, rec.storage_uri,
+                rec.annotation_id,
+                rec.frame_id,
+                rec.model_name,
+                rec.prompt_hash,
+                rec.raw_response,
+                rec.parsed_output,
+                rec.schema_valid,
+                rec.validation_errors,
+                rec.confidence_overall,
+                rec.review_status,
+                rec.reviewer,
+                rec.review_notes,
+                rec.prompt_tokens,
+                rec.completion_tokens,
+                rec.total_tokens,
+                rec.api_latency_ms,
+                rec.modality,
+                rec.storage_uri,
             ),
         )
         self._conn.execute(
@@ -349,10 +380,20 @@ class AnnotationStore:
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                rec.comparison_id, rec.frame_id, rec.model_name, rec.prompt_hash,
-                rec.raw_response, rec.parsed_output, rec.schema_valid, rec.validation_errors,
-                rec.confidence_overall, rec.prompt_tokens, rec.completion_tokens,
-                rec.total_tokens, rec.api_latency_ms, rec.modality,
+                rec.comparison_id,
+                rec.frame_id,
+                rec.model_name,
+                rec.prompt_hash,
+                rec.raw_response,
+                rec.parsed_output,
+                rec.schema_valid,
+                rec.validation_errors,
+                rec.confidence_overall,
+                rec.prompt_tokens,
+                rec.completion_tokens,
+                rec.total_tokens,
+                rec.api_latency_ms,
+                rec.modality,
             ),
         )
         self._conn.commit()
@@ -409,9 +450,7 @@ class AnnotationStore:
 
         # vision path
         if model_name is None or prompt_hash is None:
-            raise ValueError(
-                "model_name and prompt_hash are required for vision modality"
-            )
+            raise ValueError("model_name and prompt_hash are required for vision modality")
         row = self._conn.execute(
             """
             SELECT * FROM annotations
@@ -587,9 +626,7 @@ class AnnotationStore:
             """,
         ).fetchall()
 
-    def update_annotation_parsed_output(
-        self, annotation_id: str, parsed_output: str
-    ) -> None:
+    def update_annotation_parsed_output(self, annotation_id: str, parsed_output: str) -> None:
         """Overwrite parsed_output for an annotation (human correction).
 
         Args:

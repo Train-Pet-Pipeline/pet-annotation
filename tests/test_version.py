@@ -1,4 +1,5 @@
 """Ensure pet-annotation ships on Phase 2 foundation pins."""
+
 import pet_annotation
 import pet_annotation._version_pins as pins
 

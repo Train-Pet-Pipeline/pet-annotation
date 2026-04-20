@@ -1,4 +1,5 @@
 """DPO pair generation — cross-model and user feedback pairing."""
+
 from __future__ import annotations
 
 import json
@@ -78,21 +79,26 @@ def generate_cross_model_pairs(
             }
 
             ok, errors = validate_pair(
-                primary_output, rejected_output, pair_meta,
+                primary_output,
+                rejected_output,
+                pair_meta,
                 schema_version=schema_version,
             )
             if ok:
-                pairs.append({
-                    "chosen": primary_output,
-                    "rejected": rejected_output,
-                    "metadata": pair_meta,
-                    "frame_id": frame_id,
-                    "frame_path": row["frame_path"],
-                })
+                pairs.append(
+                    {
+                        "chosen": primary_output,
+                        "rejected": rejected_output,
+                        "metadata": pair_meta,
+                        "frame_id": frame_id,
+                        "frame_path": row["frame_path"],
+                    }
+                )
             else:
                 logger.info(
                     '{"event": "pair_rejected", "frame_id": "%s", "errors": %s}',
-                    frame_id, json.dumps(errors),
+                    frame_id,
+                    json.dumps(errors),
                 )
 
     logger.info('{"event": "pairs_generated", "count": %d}', len(pairs))

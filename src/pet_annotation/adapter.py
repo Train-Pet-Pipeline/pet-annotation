@@ -4,6 +4,7 @@ These functions perform the final mapping between the SQLite row dataclasses
 (VisionAnnotationRow, AudioAnnotationRow) and the canonical pet_schema models
 (VisionAnnotation, AudioAnnotation).
 """
+
 from __future__ import annotations
 
 import json

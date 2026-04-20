@@ -1,4 +1,5 @@
 """CLI entry point for pet-annotation."""
+
 from __future__ import annotations
 
 import asyncio
@@ -114,6 +115,7 @@ def export_cmd(fmt, output, params, modality):
     if fmt == "audio" and modality == "audio":
         from pet_annotation.export.to_audio_labels import export_audio_labels
         from pet_annotation.store import AnnotationStore
+
         config = load_config(Path(params))
         store = AnnotationStore(db_path=Path(config.database.path))
         out = Path(output) if output else Path("exports/audio_labels.jsonl")
@@ -132,9 +134,12 @@ def export_cmd(fmt, output, params, modality):
     try:
         if fmt == "sft":
             from pet_annotation.export.to_sharegpt import export_sharegpt
+
             out = Path(output) if output else Path("exports/sft_train.jsonl")
             count = export_sharegpt(
-                store, out, config.annotation.schema_version,
+                store,
+                out,
+                config.annotation.schema_version,
                 data_root=config.database.data_root,
             )
             click.echo(f"Exported {count} SFT records to {out}")
@@ -142,12 +147,15 @@ def export_cmd(fmt, output, params, modality):
         elif fmt == "dpo":
             from pet_annotation.dpo.generate_pairs import generate_cross_model_pairs
             from pet_annotation.export.to_dpo_pairs import export_dpo_pairs
+
             pairs = generate_cross_model_pairs(
                 store, config.annotation.primary_model, config.annotation.schema_version
             )
             out = Path(output) if output else Path("exports/dpo_pairs.jsonl")
             count = export_dpo_pairs(
-                pairs, out, config.annotation.schema_version,
+                pairs,
+                out,
+                config.annotation.schema_version,
                 data_root=config.database.data_root,
             )
             click.echo(f"Exported {count} DPO pairs to {out}")
@@ -160,8 +168,10 @@ def export_cmd(fmt, output, params, modality):
 @click.option("--ls-key", envvar="LABEL_STUDIO_API_KEY", default=None, help="Label Studio API key")
 @click.option("--ls-email", envvar="LABEL_STUDIO_ADMIN_EMAIL", default=None, help="LS admin email")
 @click.option(
-    "--ls-password", envvar="LABEL_STUDIO_ADMIN_PASSWORD",
-    default=None, help="LS admin password",
+    "--ls-password",
+    envvar="LABEL_STUDIO_ADMIN_PASSWORD",
+    default=None,
+    help="LS admin password",
 )
 @click.option("--params", default="params.yaml", type=click.Path(exists=True))
 @click.option(
@@ -193,7 +203,9 @@ def ls_import(ls_url, ls_key, ls_email, ls_password, params, modality):
     try:
         try:
             count = import_needs_review(
-                store, ls_url, session,
+                store,
+                ls_url,
+                session,
                 data_root=config.database.data_root,
                 modality=modality,
             )
@@ -209,8 +221,10 @@ def ls_import(ls_url, ls_key, ls_email, ls_password, params, modality):
 @click.option("--ls-key", envvar="LABEL_STUDIO_API_KEY", default=None, help="Label Studio API key")
 @click.option("--ls-email", envvar="LABEL_STUDIO_ADMIN_EMAIL", default=None, help="LS admin email")
 @click.option(
-    "--ls-password", envvar="LABEL_STUDIO_ADMIN_PASSWORD",
-    default=None, help="LS admin password",
+    "--ls-password",
+    envvar="LABEL_STUDIO_ADMIN_PASSWORD",
+    default=None,
+    help="LS admin password",
 )
 @click.option("--params", default="params.yaml", type=click.Path(exists=True))
 @click.option(

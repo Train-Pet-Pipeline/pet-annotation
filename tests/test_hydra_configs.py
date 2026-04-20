@@ -1,4 +1,5 @@
 """Hydra config composition tests for pet-annotation config group."""
+
 from pathlib import Path
 
 from hydra import compose, initialize_config_dir

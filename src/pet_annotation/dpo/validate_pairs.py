@@ -1,4 +1,5 @@
 """DPO pair validation — enforces 5 rules from DEVELOPMENT_GUIDE."""
+
 from __future__ import annotations
 
 import json
@@ -60,8 +61,6 @@ def validate_pair(
     chosen_conf = chosen.get("scene", {}).get("confidence_overall", 0)
     rejected_conf = rejected.get("scene", {}).get("confidence_overall", 0)
     if chosen_conf < rejected_conf:
-        errors.append(
-            f"chosen confidence ({chosen_conf}) < rejected confidence ({rejected_conf})"
-        )
+        errors.append(f"chosen confidence ({chosen_conf}) < rejected confidence ({rejected_conf})")
 
     return len(errors) == 0, errors

@@ -1,4 +1,5 @@
 """Tests for migration 003 — audio_annotations table (Task B3)."""
+
 from __future__ import annotations
 
 import json
@@ -33,15 +34,14 @@ def _column_names(store: AnnotationStore, table: str) -> set[str]:
 
 def _index_names(store: AnnotationStore) -> set[str]:
     """Return all index names from sqlite_master."""
-    rows = store._conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index'"
-    ).fetchall()
+    rows = store._conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
     return {row[0] for row in rows}
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _open_store(db_file: Path) -> AnnotationStore:
     """Seed frames then open AnnotationStore."""
@@ -52,6 +52,7 @@ def _open_store(db_file: Path) -> AnnotationStore:
 # ---------------------------------------------------------------------------
 # Tests — table existence and columns
 # ---------------------------------------------------------------------------
+
 
 def test_audio_annotations_table_exists(tmp_path: Path) -> None:
     """Migration 003 must create the audio_annotations table."""
@@ -86,22 +87,20 @@ def test_audio_annotations_expected_columns(tmp_path: Path) -> None:
 # Tests — indexes
 # ---------------------------------------------------------------------------
 
+
 def test_audio_annotations_indexes_exist(tmp_path: Path) -> None:
     """Migration 003 must create both supporting indexes."""
     store = _open_store(tmp_path / "test.db")
     indexes = _index_names(store)
-    assert "idx_audio_ann_sample" in indexes, (
-        f"'idx_audio_ann_sample' missing; got: {indexes}"
-    )
-    assert "idx_audio_ann_class" in indexes, (
-        f"'idx_audio_ann_class' missing; got: {indexes}"
-    )
+    assert "idx_audio_ann_sample" in indexes, f"'idx_audio_ann_sample' missing; got: {indexes}"
+    assert "idx_audio_ann_class" in indexes, f"'idx_audio_ann_class' missing; got: {indexes}"
     store.close()
 
 
 # ---------------------------------------------------------------------------
 # Tests — CHECK constraints
 # ---------------------------------------------------------------------------
+
 
 def test_audio_annotations_modality_check_rejects_vision(tmp_path: Path) -> None:
     """INSERT with modality='vision' must raise IntegrityError (CHECK constraint)."""
@@ -147,9 +146,7 @@ def test_audio_annotations_annotator_type_valid_values(tmp_path: Path) -> None:
             (f"aa-valid-{i}", atype),
         )
     store._conn.commit()
-    count = store._conn.execute(
-        "SELECT COUNT(*) FROM audio_annotations"
-    ).fetchone()[0]
+    count = store._conn.execute("SELECT COUNT(*) FROM audio_annotations").fetchone()[0]
     assert count == 4
     store.close()
 
@@ -157,6 +154,7 @@ def test_audio_annotations_annotator_type_valid_values(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Tests — JSON round-trip
 # ---------------------------------------------------------------------------
+
 
 def test_audio_annotations_json_roundtrip(tmp_path: Path) -> None:
     """Insert a row with class_probs and logits JSON; SELECT and parse back correctly."""
@@ -187,9 +185,7 @@ def test_audio_annotations_json_roundtrip(tmp_path: Path) -> None:
     assert class_probs_out == class_probs_in, (
         f"class_probs mismatch: {class_probs_out!r} != {class_probs_in!r}"
     )
-    assert logits_out == logits_in, (
-        f"logits mismatch: {logits_out!r} != {logits_in!r}"
-    )
+    assert logits_out == logits_in, f"logits mismatch: {logits_out!r} != {logits_in!r}"
     store.close()
 
 

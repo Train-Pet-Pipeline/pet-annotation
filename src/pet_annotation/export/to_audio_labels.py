@@ -16,6 +16,7 @@ Schema decisions:
   ``local://<sample_id>``.  Update this logic when a storage_uri column is added
   to the migration.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,9 +46,7 @@ def _parse_class_probs(raw: str | None, sample_id: str) -> dict:
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"Malformed class_probs JSON for sample_id={sample_id!r}: {exc}"
-        ) from exc
+        raise ValueError(f"Malformed class_probs JSON for sample_id={sample_id!r}: {exc}") from exc
 
 
 def export_audio_labels(

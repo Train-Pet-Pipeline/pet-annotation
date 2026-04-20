@@ -1,4 +1,5 @@
 """Label Studio labeling-config templates by modality."""
+
 from __future__ import annotations
 
 from pathlib import Path

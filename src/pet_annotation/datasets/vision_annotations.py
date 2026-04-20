@@ -1,4 +1,5 @@
 """Dataset plugin exposing pet_annotation's vision annotations as VisionAnnotation iterator."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -40,9 +41,7 @@ class VisionAnnotationsDataset(BaseDataset):
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         try:
-            cur = conn.execute(
-                "SELECT * FROM annotations WHERE modality = 'vision'"
-            )
+            cur = conn.execute("SELECT * FROM annotations WHERE modality = 'vision'")
             for row in cur.fetchall():
                 row_dict = dict(row)
                 ra = VisionAnnotationRow(

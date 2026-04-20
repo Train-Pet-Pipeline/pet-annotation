@@ -1,4 +1,5 @@
 """Export approved annotations to ShareGPT JSONL format for SFT training."""
+
 from __future__ import annotations
 
 import json

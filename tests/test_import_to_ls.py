@@ -1,4 +1,5 @@
 """Tests for LS import dispatch by modality."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -9,9 +10,7 @@ from pet_annotation.human_review.import_to_ls import import_needs_review
 
 
 @patch("pet_annotation.human_review.import_to_ls.template_for")
-def test_import_needs_review_default_modality_uses_vision_template(
-    mock_template_for, monkeypatch
-):
+def test_import_needs_review_default_modality_uses_vision_template(mock_template_for, monkeypatch):
     """Default modality is vision; template_for('vision') is consulted."""
     mock_template_for.return_value = "<View><Image/></View>"
     store = MagicMock()

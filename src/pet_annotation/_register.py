@@ -5,6 +5,7 @@ registered callable (named ``register_all``, matching pet-infra's own
 convention — see ``pet_infra._register``) at CLI startup to trigger the
 ``@DATASETS.register_module`` side-effects in plugin modules.
 """
+
 from __future__ import annotations
 
 
