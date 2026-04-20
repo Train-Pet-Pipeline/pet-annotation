@@ -1,4 +1,5 @@
 """Tests for export modules."""
+
 from __future__ import annotations
 
 import json
@@ -36,13 +37,19 @@ class TestExportShareGPT:
         """Exports approved annotations to ShareGPT JSONL format."""
         store = AnnotationStore(conn=db_conn)
         _insert_frame(db_conn, "f1")
-        store.insert_annotation(AnnotationRecord(
-            annotation_id=str(uuid.uuid4()), frame_id="f1",
-            model_name="primary", prompt_hash="h1",
-            raw_response=VALID_RAW, parsed_output=VALID_RAW,
-            schema_valid=True, confidence_overall=0.9,
-            review_status="approved",
-        ))
+        store.insert_annotation(
+            AnnotationRecord(
+                annotation_id=str(uuid.uuid4()),
+                frame_id="f1",
+                model_name="primary",
+                prompt_hash="h1",
+                raw_response=VALID_RAW,
+                parsed_output=VALID_RAW,
+                schema_valid=True,
+                confidence_overall=0.9,
+                review_status="approved",
+            )
+        )
 
         out = tmp_path / "sft.jsonl"
         count = export_sharegpt(store, out, schema_version="1.0")
@@ -59,12 +66,14 @@ class TestExportDPO:
     @patch("pet_annotation.export.to_dpo_pairs.render_prompt", return_value=("sys", "usr"))
     def test_exports_dpo_pairs(self, mock_render, tmp_path):
         """Exports DPO pairs to JSONL format."""
-        pairs = [{
-            "chosen": {"narrative": "A", "scene": {"confidence_overall": 0.9}},
-            "rejected": {"narrative": "B", "scene": {"confidence_overall": 0.7}},
-            "metadata": {"pair_source": "model_comparison"},
-            "frame_path": "frames/001.jpg",
-        }]
+        pairs = [
+            {
+                "chosen": {"narrative": "A", "scene": {"confidence_overall": 0.9}},
+                "rejected": {"narrative": "B", "scene": {"confidence_overall": 0.7}},
+                "metadata": {"pair_source": "model_comparison"},
+                "frame_path": "frames/001.jpg",
+            }
+        ]
 
         out = tmp_path / "dpo.jsonl"
         count = export_dpo_pairs(pairs, out)

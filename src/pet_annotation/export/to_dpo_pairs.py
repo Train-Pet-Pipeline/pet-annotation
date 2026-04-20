@@ -1,4 +1,5 @@
 """Export validated DPO pairs to JSONL format for DPO training."""
+
 from __future__ import annotations
 
 import json

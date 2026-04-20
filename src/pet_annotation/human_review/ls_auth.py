@@ -7,6 +7,7 @@ Supports two modes:
 Callers should use ``get_ls_session()`` which auto-detects which mode
 works and returns an authenticated ``requests.Session``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -126,10 +127,12 @@ def _session_login(
 
     # Set CSRF header for all subsequent API calls
     csrf = session.cookies.get("csrftoken", "")
-    session.headers.update({
-        "X-CSRFToken": csrf,
-        "Referer": f"{ls_url}/",
-    })
+    session.headers.update(
+        {
+            "X-CSRFToken": csrf,
+            "Referer": f"{ls_url}/",
+        }
+    )
 
     logger.info('{"event": "ls_auth", "method": "session", "email": "%s"}', email)
     return session

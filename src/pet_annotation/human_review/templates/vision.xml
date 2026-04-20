@@ -1,0 +1,19 @@
+<View>
+  <Header value="Frame Image" />
+  <Image name="image" value="$image_url" />
+
+  <Header value="Species" />
+  <Text name="species_display" value="$species" />
+
+  <Header value="VLM Output (edit if corrections needed)" />
+  <TextArea name="corrected_output" toName="image"
+            value="$vlm_output" rows="20" editable="true"
+            maxSubmissions="1" />
+
+  <Header value="Review Decision" />
+  <Choices name="review_decision" toName="image" choice="single">
+    <Choice value="approve" />
+    <Choice value="reject" />
+    <Choice value="correct" />
+  </Choices>
+</View>

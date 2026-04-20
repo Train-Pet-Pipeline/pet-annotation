@@ -1,4 +1,5 @@
 """Tests for config module (TDD)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -120,3 +121,10 @@ def test_empty_key_env_returns_empty(tmp_path: Path) -> None:
 def test_setup_logging_runs_without_error() -> None:
     """setup_logging() configures root logger without raising."""
     setup_logging()
+
+
+def test_params_has_modality_default() -> None:
+    """Verify that the actual params.yaml includes modality_default."""
+    params_path = Path(__file__).parent.parent / "params.yaml"
+    params = yaml.safe_load(params_path.read_text())
+    assert params["annotation"]["modality_default"] == "vision"

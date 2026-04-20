@@ -3,6 +3,7 @@
 Updates annotation review_status and frame annotation_status based on
 the sampling decision.
 """
+
 from __future__ import annotations
 
 import logging
@@ -57,7 +58,8 @@ def run_auto_check(
         stats[decision] += 1
         logger.info(
             '{"event": "auto_check", "frame_id": "%s", "decision": "%s", "confidence": %s}',
-            row["frame_id"], decision,
+            row["frame_id"],
+            decision,
             row["confidence_overall"] if row["confidence_overall"] is not None else "null",
         )
 

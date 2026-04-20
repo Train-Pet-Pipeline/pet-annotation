@@ -4,6 +4,7 @@ Updates review_status and optionally overwrites parsed_output if the
 reviewer made corrections.  Corrected annotations also generate DPO
 pairs (original=rejected, corrected=chosen).
 """
+
 from __future__ import annotations
 
 import json
@@ -81,15 +82,11 @@ def export_reviewed(
         decision = decision_val.get("choices", ["approve"])[0] if decision_val else "approve"
 
         if decision == "approve":
-            store.update_review_and_frame_status(
-                annotation_id, "reviewed", frame_id, "approved"
-            )
+            store.update_review_and_frame_status(annotation_id, "reviewed", frame_id, "approved")
             updated += 1
 
         elif decision == "reject":
-            store.update_review_and_frame_status(
-                annotation_id, "rejected", frame_id, "rejected"
-            )
+            store.update_review_and_frame_status(annotation_id, "rejected", frame_id, "rejected")
             updated += 1
 
         elif decision == "correct":
@@ -116,9 +113,7 @@ def export_reviewed(
                 # Update annotation with corrected output
                 store.update_annotation_parsed_output(annotation_id, corrected_output)
 
-            store.update_review_and_frame_status(
-                annotation_id, "reviewed", frame_id, "approved"
-            )
+            store.update_review_and_frame_status(annotation_id, "reviewed", frame_id, "approved")
             updated += 1
 
     logger.info('{"event": "ls_export_done", "updated": %d}', updated)
@@ -165,10 +160,12 @@ def _store_human_dpo_pair(
                 frame_id,
                 corrected_output,
                 original_output,
-                json.dumps({
-                    "annotation_id": annotation_id,
-                    "model_name": row["model_name"],
-                }),
+                json.dumps(
+                    {
+                        "annotation_id": annotation_id,
+                        "model_name": row["model_name"],
+                    }
+                ),
             ),
         )
         conn.commit()

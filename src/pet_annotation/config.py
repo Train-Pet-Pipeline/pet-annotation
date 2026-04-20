@@ -2,6 +2,7 @@
 
 Loads params.yaml into validated Pydantic models and configures structured logging.
 """
+
 from __future__ import annotations
 
 import os

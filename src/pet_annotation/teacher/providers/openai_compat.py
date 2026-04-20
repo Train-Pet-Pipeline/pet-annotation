@@ -2,6 +2,7 @@
 
 Covers: DashScope (Qwen), any OpenAI-compatible endpoint.
 """
+
 from __future__ import annotations
 
 import base64
@@ -37,9 +38,7 @@ class OpenAICompatProvider(BaseProvider):
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._max_retries = max_retries
         self._session: aiohttp.ClientSession | None = None
-        self._call_api_with_retry = standard_retry_async(
-            self._call_api, max_attempts=max_retries
-        )
+        self._call_api_with_retry = standard_retry_async(self._call_api, max_attempts=max_retries)
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create the shared aiohttp session.
@@ -56,9 +55,7 @@ class OpenAICompatProvider(BaseProvider):
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def annotate(
-        self, image_path: str, prompt: PromptPair, api_key: str
-    ) -> ProviderResult:
+    async def annotate(self, image_path: str, prompt: PromptPair, api_key: str) -> ProviderResult:
         """Send a single frame for annotation via chat completions endpoint.
 
         Args:
@@ -101,9 +98,7 @@ class OpenAICompatProvider(BaseProvider):
 
         return await self._call_api_with_retry(url, payload, headers)
 
-    async def _call_api(
-        self, url: str, payload: dict, headers: dict
-    ) -> ProviderResult:
+    async def _call_api(self, url: str, payload: dict, headers: dict) -> ProviderResult:
         """Make the API call (wrapped by tenacity retry).
 
         Args:
