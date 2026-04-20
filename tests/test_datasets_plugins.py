@@ -1,4 +1,5 @@
 """Tests for VisionAnnotationsDataset plugin registration and behaviour."""
+
 from __future__ import annotations
 
 import json
@@ -7,8 +8,9 @@ import pet_schema
 from pet_infra.base.dataset import BaseDataset
 from pet_infra.registry import DATASETS
 
+import pet_annotation.datasets.audio_annotations  # noqa: F401  (trigger registration)
 import pet_annotation.datasets.vision_annotations  # noqa: F401  (trigger registration)
-from pet_annotation.store import AnnotationStore, VisionAnnotationRow
+from pet_annotation.store import AnnotationStore, AudioAnnotationRow, VisionAnnotationRow
 
 # ---------------------------------------------------------------------------
 # Shared valid PetFeederEvent JSON (matches adapter test pattern)
@@ -211,6 +213,7 @@ def test_vision_annotations_filters_audio_rows(tmp_path):
     # We also need a frame row for it, but since FK is enforced we insert frame-a1 first.
     _insert_frame(db_path, "frame-a1")
     import sqlite3
+
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute(
@@ -238,5 +241,66 @@ def test_vision_annotations_build_empty_db(tmp_path):
     store.close()
 
     cls = DATASETS.module_dict["pet_annotation.vision_annotations"]
+    ds = cls()
+    assert list(ds.build({"db_path": str(db_path)})) == []
+
+
+# ---------------------------------------------------------------------------
+# Audio annotation plugin tests (mirror of vision tests for B8)
+# ---------------------------------------------------------------------------
+
+
+def test_audio_annotations_registered():
+    """Plugin must appear in DATASETS.module_dict under flat dotted key."""
+    assert "pet_annotation.audio_annotations" in DATASETS.module_dict
+
+
+def test_audio_annotations_is_base_dataset():
+    """Plugin class must be a subclass of BaseDataset."""
+    cls = DATASETS.module_dict["pet_annotation.audio_annotations"]
+    ds = cls()
+    assert isinstance(ds, BaseDataset)
+
+
+def test_audio_annotations_modality():
+    """modality() must return the string 'audio'."""
+    cls = DATASETS.module_dict["pet_annotation.audio_annotations"]
+    ds = cls()
+    assert ds.modality() == "audio"
+
+
+def test_audio_annotations_build_yields_audio_annotation(tmp_path):
+    """build() must yield pet_schema.AudioAnnotation objects."""
+    store, db_path = _bootstrap_db(tmp_path)
+    store.close()
+
+    # Create and insert a single audio annotation row
+    store2 = AnnotationStore(db_path=db_path)
+    audio_row = AudioAnnotationRow(
+        annotation_id="ann-a1",
+        sample_id="sample-001",
+        annotator_type="cnn",
+        annotator_id="audio-cnn-v1",
+        predicted_class="eating",
+        class_probs=json.dumps({"eating": 0.9, "drinking": 0.1}),
+        modality="audio",
+        schema_version=pet_schema.SCHEMA_VERSION,
+        logits=None,
+    )
+    store2.insert_annotation(audio_row)
+    store2.close()
+
+    cls = DATASETS.module_dict["pet_annotation.audio_annotations"]
+    ds = cls()
+    result = next(iter(ds.build({"db_path": str(db_path)})))
+    assert isinstance(result, pet_schema.AudioAnnotation)
+
+
+def test_audio_annotations_build_empty_db(tmp_path):
+    """build() over an empty audio_annotations table must return an empty iterator."""
+    store, db_path = _bootstrap_db(tmp_path)
+    store.close()
+
+    cls = DATASETS.module_dict["pet_annotation.audio_annotations"]
     ds = cls()
     assert list(ds.build({"db_path": str(db_path)})) == []
