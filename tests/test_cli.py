@@ -54,10 +54,13 @@ class TestExportModalityDispatch:
         """export --format=audio --modality=audio calls export_audio_labels once."""
         runner = CliRunner()
         out_path = str(tmp_path / "audio_labels.jsonl")
-        with patch(
-            "pet_annotation.export.to_audio_labels.export_audio_labels",
-            return_value=0,
-        ) as mock_export:
+        with (
+            patch("pet_annotation.store.AnnotationStore") as mock_store_cls,
+            patch(
+                "pet_annotation.export.to_audio_labels.export_audio_labels",
+                return_value=0,
+            ) as mock_export,
+        ):
             result = runner.invoke(
                 cli,
                 [
@@ -69,7 +72,7 @@ class TestExportModalityDispatch:
                 ],
             )
         assert result.exit_code == 0, result.output
-        mock_export.assert_called_once_with(Path(out_path))
+        mock_export.assert_called_once_with(mock_store_cls.return_value, Path(out_path))
 
     def test_export_format_modality_mismatch_sft_audio(self, params_file: Path) -> None:
         """export --format=sft --modality=audio returns non-zero exit."""

@@ -113,8 +113,11 @@ def export_cmd(fmt, output, params, modality):
 
     if fmt == "audio" and modality == "audio":
         from pet_annotation.export.to_audio_labels import export_audio_labels
+        from pet_annotation.store import AnnotationStore
+        config = load_config(Path(params))
+        store = AnnotationStore(db_path=Path(config.database.path))
         out = Path(output) if output else Path("exports/audio_labels.jsonl")
-        count = export_audio_labels(out)
+        count = export_audio_labels(store, out)
         click.echo(f"Exported {count} audio labels to {out}")
         return
 

@@ -505,6 +505,28 @@ class AnnotationStore:
             (limit,),
         ).fetchall()
 
+    def fetch_audio_annotations(self, limit: int | None = None) -> list[sqlite3.Row]:
+        """Return rows from audio_annotations, optionally capped by limit.
+
+        The audio_annotations table has no review_status column, so all rows
+        are returned.  The caller (to_audio_labels.py) is responsible for
+        filtering or post-processing if needed.
+
+        Args:
+            limit: Maximum number of rows to return.  ``None`` means no cap.
+
+        Returns:
+            List of sqlite3.Row objects from the audio_annotations table.
+        """
+        if limit is None:
+            return self._conn.execute(
+                "SELECT * FROM audio_annotations ORDER BY created_at",
+            ).fetchall()
+        return self._conn.execute(
+            "SELECT * FROM audio_annotations ORDER BY created_at LIMIT ?",
+            (limit,),
+        ).fetchall()
+
     def fetch_comparisons_for_frame(self, frame_id: str) -> list[sqlite3.Row]:
         """Return all comparison rows for a given frame.
 
