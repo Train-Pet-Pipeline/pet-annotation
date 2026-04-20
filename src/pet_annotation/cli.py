@@ -20,8 +20,18 @@ def cli():
 @click.option("--batch-size", default=None, type=int, help="Override params.yaml batch_size")
 @click.option("--dry-run", is_flag=True, help="Print plan without calling APIs")
 @click.option("--params", default="params.yaml", type=click.Path(exists=True))
-def annotate(batch_size, dry_run, params):
+@click.option(
+    "--modality",
+    type=click.Choice(["vision", "audio"]),
+    default="vision",
+    show_default=True,
+    help="Annotation modality",
+)
+def annotate(batch_size, dry_run, params, modality):
     """Batch annotate pending frames using configured models."""
+    if modality == "audio":
+        raise click.ClickException("Audio pipeline not yet implemented for this command")
+
     from pet_annotation.store import AnnotationStore
     from pet_annotation.teacher.orchestrator import AnnotationOrchestrator
 
@@ -49,8 +59,18 @@ def annotate(batch_size, dry_run, params):
 
 @cli.command()
 @click.option("--params", default="params.yaml", type=click.Path(exists=True))
-def check(params):
+@click.option(
+    "--modality",
+    type=click.Choice(["vision", "audio"]),
+    default="vision",
+    show_default=True,
+    help="Annotation modality",
+)
+def check(params, modality):
     """Run quality check on auto_checked annotations."""
+    if modality == "audio":
+        raise click.ClickException("Audio pipeline not yet implemented for this command")
+
     from pet_annotation.quality.auto_check import run_auto_check
     from pet_annotation.store import AnnotationStore
 
@@ -72,8 +92,32 @@ def check(params):
 @click.option("--format", "fmt", type=click.Choice(["sft", "dpo", "audio"]), required=True)
 @click.option("--output", "-o", type=click.Path(), default=None)
 @click.option("--params", default="params.yaml", type=click.Path(exists=True))
-def export_cmd(fmt, output, params):
+@click.option(
+    "--modality",
+    type=click.Choice(["vision", "audio"]),
+    default="vision",
+    show_default=True,
+    help="Annotation modality",
+)
+def export_cmd(fmt, output, params, modality):
     """Export training data in the specified format."""
+    # Validate format/modality consistency
+    if fmt == "sft" and modality == "audio":
+        raise click.ClickException("SFT export is vision-only; use --modality=vision")
+    if fmt == "dpo" and modality == "audio":
+        raise click.ClickException("DPO audio export is not yet implemented; use --modality=vision")
+    if fmt == "audio" and modality == "vision":
+        raise click.ClickException(
+            "Format/modality mismatch: --format=audio requires --modality=audio"
+        )
+
+    if fmt == "audio" and modality == "audio":
+        from pet_annotation.export.to_audio_labels import export_audio_labels
+        out = Path(output) if output else Path("exports/audio_labels.jsonl")
+        count = export_audio_labels(out)
+        click.echo(f"Exported {count} audio labels to {out}")
+        return
+
     from pet_annotation.store import AnnotationStore
 
     config = load_config(Path(params))
@@ -101,9 +145,6 @@ def export_cmd(fmt, output, params):
                 data_root=config.database.data_root,
             )
             click.echo(f"Exported {count} DPO pairs to {out}")
-
-        elif fmt == "audio":
-            click.echo("Audio label export not yet implemented")
     finally:
         store.close()
 
@@ -117,7 +158,14 @@ def export_cmd(fmt, output, params):
     default=None, help="LS admin password",
 )
 @click.option("--params", default="params.yaml", type=click.Path(exists=True))
-def ls_import(ls_url, ls_key, ls_email, ls_password, params):
+@click.option(
+    "--modality",
+    type=click.Choice(["vision", "audio"]),
+    default="vision",
+    show_default=True,
+    help="Annotation modality",
+)
+def ls_import(ls_url, ls_key, ls_email, ls_password, params, modality):
     """Import needs_review annotations into Label Studio for human review."""
     from pet_annotation.human_review.import_to_ls import import_needs_review
     from pet_annotation.human_review.ls_auth import get_ls_session
@@ -137,7 +185,14 @@ def ls_import(ls_url, ls_key, ls_email, ls_password, params):
     config = load_config(Path(params))
     store = AnnotationStore(db_path=Path(config.database.path))
     try:
-        count = import_needs_review(store, ls_url, session, data_root=config.database.data_root)
+        try:
+            count = import_needs_review(
+                store, ls_url, session,
+                data_root=config.database.data_root,
+                modality=modality,
+            )
+        except NotImplementedError as exc:
+            raise click.ClickException(str(exc)) from exc
         click.echo(f"Imported {count} tasks into Label Studio")
     finally:
         store.close()
@@ -152,11 +207,21 @@ def ls_import(ls_url, ls_key, ls_email, ls_password, params):
     default=None, help="LS admin password",
 )
 @click.option("--params", default="params.yaml", type=click.Path(exists=True))
-def ls_export(ls_url, ls_key, ls_email, ls_password, params):
+@click.option(
+    "--modality",
+    type=click.Choice(["vision", "audio"]),
+    default="vision",
+    show_default=True,
+    help="Annotation modality",
+)
+def ls_export(ls_url, ls_key, ls_email, ls_password, params, modality):
     """Pull reviewed annotations from Label Studio back to DB."""
     from pet_annotation.human_review.export_from_ls import export_reviewed
     from pet_annotation.human_review.ls_auth import get_ls_session
     from pet_annotation.store import AnnotationStore
+
+    if modality == "audio":
+        raise click.ClickException("Audio pipeline not yet implemented for this command")
 
     if not ls_key and not (ls_email and ls_password):
         click.echo(
