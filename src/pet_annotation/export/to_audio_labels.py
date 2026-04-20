@@ -27,6 +27,29 @@ from pet_annotation.store import AnnotationStore
 logger = logging.getLogger(__name__)
 
 
+def _parse_class_probs(raw: str | None, sample_id: str) -> dict:
+    """Parse class_probs JSON string, raising ValueError with context on failure.
+
+    Args:
+        raw: Raw JSON string from the DB column (may be None/empty).
+        sample_id: Identifier of the row being processed, used in error messages.
+
+    Returns:
+        Parsed dict, or empty dict when *raw* is falsy.
+
+    Raises:
+        ValueError: If *raw* is non-empty but not valid JSON.
+    """
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Malformed class_probs JSON for sample_id={sample_id!r}: {exc}"
+        ) from exc
+
+
 def export_audio_labels(
     store: AnnotationStore,
     output_path: Path,
@@ -62,7 +85,7 @@ def export_audio_labels(
                 "sample_id": sample_id,
                 "storage_uri": f"local://{sample_id}",
                 "label": row["predicted_class"],
-                "class_probs": json.loads(row["class_probs"]) if row["class_probs"] else {},
+                "class_probs": _parse_class_probs(row["class_probs"], sample_id),
                 "annotator_id": row["annotator_id"],
             }
             fh.write(json.dumps(obj, ensure_ascii=False) + "\n")

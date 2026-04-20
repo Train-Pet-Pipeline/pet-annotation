@@ -10,6 +10,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from pet_annotation.export.to_audio_labels import export_audio_labels
 from pet_annotation.store import AnnotationStore, AudioAnnotationRow
 
@@ -127,3 +129,31 @@ class TestExportAudioLabelsParentDirCreated:
         export_audio_labels(store, out)
 
         assert out.exists()
+
+
+class TestExportAudioLabelsMalformedClassProbs:
+    def test_export_audio_labels_raises_on_malformed_class_probs(
+        self, db_conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        """Malformed class_probs JSON raises ValueError with sample_id context."""
+        store = _make_store(db_conn)
+        store._conn.execute(
+            "INSERT INTO audio_annotations (annotation_id, sample_id, annotator_type, "
+            "annotator_id, predicted_class, class_probs, modality, schema_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "ann-bad",
+                "sample-bad",
+                "cnn",
+                "audio_cnn_v1",
+                "bark",
+                "{not valid}",
+                "audio",
+                "2.0.0",
+            ),
+        )
+        store._conn.commit()
+        out = tmp_path / "audio.jsonl"
+        with pytest.raises(ValueError, match="sample-bad"):
+            export_audio_labels(store, out)
+        store.close()
