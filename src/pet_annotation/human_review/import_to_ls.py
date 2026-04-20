@@ -10,68 +10,60 @@ import logging
 
 import requests
 
+from pet_annotation.human_review.templates import template_for
 from pet_annotation.store import AnnotationStore
 
 logger = logging.getLogger(__name__)
 
-# Label Studio project config for pet annotation review.
-# TextArea allows reviewer to edit the VLM JSON output directly.
-LABELING_CONFIG = """
-<View>
-  <Header value="Frame Image" />
-  <Image name="image" value="$image_url" />
 
-  <Header value="Species" />
-  <Text name="species_display" value="$species" />
-
-  <Header value="VLM Output (edit if corrections needed)" />
-  <TextArea name="corrected_output" toName="image"
-            value="$vlm_output" rows="20" editable="true"
-            maxSubmissions="1" />
-
-  <Header value="Review Decision" />
-  <Choices name="review_decision" toName="image" choice="single">
-    <Choice value="approve" />
-    <Choice value="reject" />
-    <Choice value="correct" />
-  </Choices>
-</View>
-"""
-
-
-def _ensure_project(ls_url: str, session: requests.Session, data_root: str) -> int:
-    """Find or create the pet-annotation-review project.
+def _ensure_project(
+    ls_url: str, session: requests.Session, data_root: str, modality: str = "vision"
+) -> int:
+    """Find or create the pet-annotation-review-{modality} project.
 
     Also ensures a local file storage is connected so that images served
     via ``/data/local-files/`` resolve correctly.
+
+    For back-compat, an existing project named ``pet-annotation-review`` (no
+    modality suffix) is treated as a vision project when ``modality="vision"``.
 
     Args:
         ls_url: Label Studio base URL.
         session: Authenticated requests session.
         data_root: Absolute path to the data root directory.
+        modality: Annotation modality; determines project title and LS template.
 
     Returns:
         Label Studio project ID.
     """
+    new_title = f"pet-annotation-review-{modality}"
+    # Legacy title used before modality-aware refactor (vision only).
+    legacy_title = "pet-annotation-review"
+
     resp = session.get(f"{ls_url}/api/projects", timeout=30)
     resp.raise_for_status()
     for proj in resp.json().get("results", []):
-        if proj["title"] == "pet-annotation-review":
+        proj_title = proj["title"]
+        if proj_title == new_title or (
+            modality == "vision" and proj_title == legacy_title
+        ):
             project_id = proj["id"]
             _ensure_local_storage(ls_url, session, project_id, data_root)
             return project_id
 
-    # Create new project
+    # Create new project with the modality-specific template (deferred lookup).
+    label_config = template_for(modality)
     payload = {
-        "title": "pet-annotation-review",
-        "label_config": LABELING_CONFIG,
+        "title": new_title,
+        "label_config": label_config,
     }
-    resp = session.post(
-        f"{ls_url}/api/projects", json=payload, timeout=30
-    )
+    resp = session.post(f"{ls_url}/api/projects", json=payload, timeout=30)
     resp.raise_for_status()
     project_id = resp.json()["id"]
-    logger.info('{"event": "ls_project_created", "project_id": %d}', project_id)
+    logger.info(
+        '{"event": "ls_project_created", "project_id": %d, "modality": "%s"}',
+        project_id, modality,
+    )
 
     _ensure_local_storage(ls_url, session, project_id, data_root)
     return project_id
@@ -129,6 +121,7 @@ def import_needs_review(
     ls_url: str,
     session: requests.Session,
     data_root: str = "",
+    modality: str = "vision",
 ) -> int:
     """Create Label Studio tasks for annotations needing review.
 
@@ -140,11 +133,24 @@ def import_needs_review(
         ls_url: Label Studio server URL.
         session: Authenticated requests.Session (from ``ls_auth.get_ls_session``).
         data_root: Absolute path to the data root directory.
+        modality: Annotation modality. Currently only "vision" is fully wired;
+            "audio" raises NotImplementedError (pending B7+ work).
 
     Returns:
         Number of tasks created.
+
+    Raises:
+        NotImplementedError: If modality is "audio" (review flow pending B7+).
+        ValueError: If modality is not a recognised value.
     """
-    project_id = _ensure_project(ls_url, session, data_root)
+    if modality == "audio":
+        raise NotImplementedError(
+            "audio review flow pending B7+ — audio fetch logic not yet wired"
+        )
+    if modality not in ("vision",):
+        raise ValueError(f"Unknown modality: {modality!r}")
+
+    project_id = _ensure_project(ls_url, session, data_root, modality)
 
     rows = store.fetch_needs_review_annotations()
     if not rows:
