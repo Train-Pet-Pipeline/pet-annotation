@@ -1,0 +1,12 @@
+<View>
+  <Audio name="audio" value="$audio_uri"/>
+  <Header value="Predicted: $predicted_class"/>
+  <Choices name="correction" toName="audio" choice="single">
+    <Choice value="bark"/>
+    <Choice value="meow"/>
+    <Choice value="purr"/>
+    <Choice value="silence"/>
+    <Choice value="ambient"/>
+  </Choices>
+  <TextArea name="notes" toName="audio" placeholder="optional reviewer notes"/>
+</View>
