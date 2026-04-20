@@ -485,11 +485,14 @@ class AnnotationStore:
     # Reporting / pipeline queries
     # ------------------------------------------------------------------
 
-    def fetch_approved_annotations(self, limit: int) -> list[sqlite3.Row]:
+    def fetch_approved_annotations(
+        self, limit: int, *, modality: str = "vision"
+    ) -> list[sqlite3.Row]:
         """Return annotations with review_status in ('approved', 'reviewed'), joined to frames.
 
         Args:
             limit: Maximum number of rows to return.
+            modality: Filter rows to this modality (default ``"vision"``).
 
         Returns:
             List of sqlite3.Row objects joining annotations and frames.
@@ -500,9 +503,10 @@ class AnnotationStore:
             FROM annotations a
             JOIN frames f ON a.frame_id = f.frame_id
             WHERE a.review_status IN ('approved', 'reviewed')
+              AND a.modality = ?
             LIMIT ?
             """,
-            (limit,),
+            (modality, limit),
         ).fetchall()
 
     def fetch_audio_annotations(self, limit: int | None = None) -> list[sqlite3.Row]:
@@ -527,18 +531,21 @@ class AnnotationStore:
             (limit,),
         ).fetchall()
 
-    def fetch_comparisons_for_frame(self, frame_id: str) -> list[sqlite3.Row]:
-        """Return all comparison rows for a given frame.
+    def fetch_comparisons_for_frame(
+        self, frame_id: str, *, modality: str = "vision"
+    ) -> list[sqlite3.Row]:
+        """Return comparison rows for a given frame filtered by modality.
 
         Args:
             frame_id: The frame to look up comparisons for.
+            modality: Filter rows to this modality (default ``"vision"``).
 
         Returns:
             List of sqlite3.Row objects from model_comparisons.
         """
         return self._conn.execute(
-            "SELECT * FROM model_comparisons WHERE frame_id=? ORDER BY created_at",
-            (frame_id,),
+            "SELECT * FROM model_comparisons WHERE frame_id=? AND modality=? ORDER BY created_at",
+            (frame_id, modality),
         ).fetchall()
 
     def fetch_auto_checked_annotations(self, primary_model: str) -> list[sqlite3.Row]:

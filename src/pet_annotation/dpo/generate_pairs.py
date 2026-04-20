@@ -14,6 +14,8 @@ def generate_cross_model_pairs(
     store: AnnotationStore,
     primary_model: str,
     schema_version: str = "1.0",
+    *,
+    modality: str = "vision",
 ) -> list[dict]:
     """Generate DPO pairs by comparing primary model vs secondary models.
 
@@ -24,11 +26,25 @@ def generate_cross_model_pairs(
         store: AnnotationStore instance.
         primary_model: Name of the primary model.
         schema_version: Schema version for validation.
+        modality: Modality to filter by (default ``"vision"``).  Audio DPO is
+            out of scope for Phase 2 — passing ``"audio"`` raises
+            ``NotImplementedError``.
 
     Returns:
         List of valid DPO pair dicts with chosen/rejected/metadata.
+
+    Raises:
+        NotImplementedError: If ``modality="audio"``.
+        ValueError: If ``modality`` is an unrecognised value.
     """
-    approved = store.fetch_approved_annotations(limit=100000)
+    if modality == "audio":
+        raise NotImplementedError(
+            "audio DPO is out of Phase 2 scope — only vision DPO pairs are supported"
+        )
+    elif modality != "vision":
+        raise ValueError(f"Unknown modality: {modality!r}")
+
+    approved = store.fetch_approved_annotations(limit=100000, modality=modality)
 
     pairs = []
 
@@ -43,7 +59,7 @@ def generate_cross_model_pairs(
         primary_output = json.loads(row["raw_response"])
 
         # Find comparison results for this frame
-        comparisons = store.fetch_comparisons_for_frame(frame_id)
+        comparisons = store.fetch_comparisons_for_frame(frame_id, modality=modality)
         for comp in comparisons:
             if not comp["schema_valid"]:
                 continue
