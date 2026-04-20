@@ -138,20 +138,11 @@ class AnnotationStore:
         self._conn.commit()
 
     def _recover_stuck_frames(self) -> None:
-        """Reset frames stuck in 'annotating' back to 'pending' on startup.
-
-        Silently skips if the frames table does not yet exist (e.g. standalone
-        annotation-only databases used in tests).
-        """
-        try:
-            self._conn.execute(
-                "UPDATE frames SET annotation_status='pending' WHERE annotation_status='annotating'"
-            )
-            self._conn.commit()
-        except sqlite3.OperationalError as e:
-            if "no such table" in str(e).lower():
-                return
-            raise
+        """Reset frames stuck in 'annotating' back to 'pending' on startup."""
+        self._conn.execute(
+            "UPDATE frames SET annotation_status='pending' WHERE annotation_status='annotating'"
+        )
+        self._conn.commit()
 
     # ------------------------------------------------------------------
     # Frame queries

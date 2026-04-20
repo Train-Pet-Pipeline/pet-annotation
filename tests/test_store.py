@@ -215,6 +215,20 @@ def test_fetch_approved_annotations(db_conn: sqlite3.Connection) -> None:
     store.close()
 
 
+def test_insert_annotation_modality_default(db_conn: sqlite3.Connection) -> None:
+    """Inserted annotation has modality='vision' by default (migration 002 column)."""
+    _insert_frame(db_conn, "f1")
+    store = AnnotationStore(conn=db_conn)
+    store.insert_annotation(_make_annotation("f1"))
+
+    row = db_conn.execute(
+        "SELECT modality FROM annotations WHERE frame_id='f1'"
+    ).fetchone()
+    assert row is not None
+    assert row["modality"] == "vision"
+    store.close()
+
+
 def test_update_review_and_frame_status(db_conn: sqlite3.Connection) -> None:
     """update_review_and_frame_status atomically updates both tables."""
     _insert_frame(db_conn, "f1", "pending")
