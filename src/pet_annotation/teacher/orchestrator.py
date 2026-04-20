@@ -16,6 +16,7 @@ import sqlite3
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TextIO
 
 from pet_schema.renderer import render_prompt
 from pet_schema.validator import validate_output
@@ -75,7 +76,7 @@ class AnnotationOrchestrator:
         self._semaphore = asyncio.Semaphore(config.annotation.max_concurrent)
         self._db_executor = ThreadPoolExecutor(max_workers=1)
         self._shutdown = False
-        self._lock_file = None
+        self._lock_file: TextIO | None = None
 
     async def run(self) -> dict:
         """Main entry point: process all pending frames in batches.
