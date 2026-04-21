@@ -36,6 +36,8 @@ class AnnotationStore:
         """Initialise store and create migrations tracking table."""
         self._conn = sqlite3.connect(db_path)
         self._conn.execute("PRAGMA foreign_keys = ON")
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        self._conn.execute("PRAGMA busy_timeout = 10000")
         self._ensure_migrations_table()
 
     def init_schema(self) -> None:

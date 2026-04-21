@@ -40,10 +40,12 @@ def export_audio_labels(
         "SELECT annotation_id, target_id, annotator_id, predicted_class, class_probs "
         "FROM classifier_annotations WHERE modality = 'audio'"
     )
+    params: tuple = ()
     if limit is not None:
-        query += f" LIMIT {int(limit)}"
+        query += " LIMIT ?"
+        params = (int(limit),)
 
-    rows = store._conn.execute(query).fetchall()
+    rows = store._conn.execute(query, params).fetchall()
     count = 0
 
     with output_path.open("w", encoding="utf-8") as fh:
