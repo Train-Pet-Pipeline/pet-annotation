@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Literal
 
 from pet_infra.base.dataset import BaseDataset
 from pet_infra.registry import DATASETS
-from pet_schema.annotations import BaseAnnotation
 
 if TYPE_CHECKING:
     import datasets as hf_datasets

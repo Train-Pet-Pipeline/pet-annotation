@@ -7,9 +7,9 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from pet_schema import ClassifierAnnotation, HumanAnnotation, LLMAnnotation, RuleAnnotation
 
 from pet_annotation.store import AnnotationStore
-from pet_schema import ClassifierAnnotation, HumanAnnotation, LLMAnnotation, RuleAnnotation
 
 
 @pytest.fixture

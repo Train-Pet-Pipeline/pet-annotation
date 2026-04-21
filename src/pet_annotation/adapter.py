@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from pet_schema import Annotation, ClassifierAnnotation, HumanAnnotation, LLMAnnotation, RuleAnnotation  # noqa: F401
+from pet_schema import (  # noqa: F401
+    Annotation,
+    ClassifierAnnotation,
+    HumanAnnotation,
+    LLMAnnotation,
+    RuleAnnotation,
+)
 
 _ROUTES = {
     "llm": "insert_llm",

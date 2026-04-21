@@ -17,7 +17,12 @@ def cli():
 @click.option("--batch-size", default=None, type=int, help="Override params.yaml batch_size")
 @click.option("--dry-run", is_flag=True, help="Print plan without calling APIs")
 @click.option("--params", default="params.yaml", show_default=True, type=click.Path())
-@click.option("--db", default=None, type=click.Path(), help="Path to SQLite database (overrides params.yaml)")
+@click.option(
+    "--db",
+    default=None,
+    type=click.Path(),
+    help="Path to SQLite database (overrides params.yaml)",
+)
 @click.option(
     "--annotator",
     type=click.Choice(["llm", "classifier", "rule", "human"]),
@@ -90,7 +95,13 @@ def stats(params):
     store = AnnotationStore(str(config.database.path))
     store.init_schema()
 
-    for table in ("llm_annotations", "classifier_annotations", "rule_annotations", "human_annotations"):
+    tables = (
+        "llm_annotations",
+        "classifier_annotations",
+        "rule_annotations",
+        "human_annotations",
+    )
+    for table in tables:
         count = store._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         click.echo(f"  {table}: {count}")
 

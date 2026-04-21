@@ -7,9 +7,9 @@ import sqlite3
 from datetime import datetime
 
 import pytest
+from pet_schema import ClassifierAnnotation, HumanAnnotation, LLMAnnotation, RuleAnnotation
 
 from pet_annotation.store import AnnotationStore
-from pet_schema import ClassifierAnnotation, HumanAnnotation, LLMAnnotation, RuleAnnotation
 
 
 @pytest.fixture
@@ -35,7 +35,11 @@ def _base():
 def test_insert_llm_roundtrip(store):
     """LLMAnnotation insert + fetch roundtrip preserves parsed_output."""
     ann = LLMAnnotation(
-        annotation_id="a1", **_base(), prompt_hash="h", raw_response="r", parsed_output={"ev": "eat"}
+        annotation_id="a1",
+        **_base(),
+        prompt_hash="h",
+        raw_response="r",
+        parsed_output={"ev": "eat"},
     )
     store.insert_llm(ann)
     rows = store.fetch_llm_by_target("t1")
@@ -59,7 +63,12 @@ def test_insert_classifier_roundtrip(store):
 
 def test_insert_rule_roundtrip(store):
     """RuleAnnotation insert + fetch roundtrip."""
-    ann = RuleAnnotation(annotation_id="r1", **_base(), rule_id="rule1", rule_output={"passed": True})
+    ann = RuleAnnotation(
+        annotation_id="r1",
+        **_base(),
+        rule_id="rule1",
+        rule_output={"passed": True},
+    )
     store.insert_rule(ann)
     assert len(store.fetch_rule_by_target("t1")) == 1
 

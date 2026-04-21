@@ -1,7 +1,8 @@
 """Tests that 4 paradigm dataset plugins are registered under the correct keys."""
 
-from pet_annotation._register import register_all
 from pet_infra.registry import DATASETS
+
+from pet_annotation._register import register_all
 
 
 def test_four_paradigm_keys_discoverable():

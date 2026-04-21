@@ -15,7 +15,6 @@ def test_pet_annotation_entry_point_discoverable():
 
 def test_register_all_registers_four_paradigm_datasets():
     """Simulate pet-infra discovery invoking register_all() — 4 new keys must be present."""
-    from pet_annotation import _register
     from pet_annotation.datasets import (
         classifier_annotations,
         human_annotations,

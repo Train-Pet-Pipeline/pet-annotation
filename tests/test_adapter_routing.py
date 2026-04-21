@@ -3,9 +3,9 @@
 from datetime import datetime
 
 import pytest
+from pet_schema import HumanAnnotation, LLMAnnotation
 
 from pet_annotation.adapter import route_annotation_to_store
-from pet_schema import HumanAnnotation, LLMAnnotation
 
 
 def _base(**kw):

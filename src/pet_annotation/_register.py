@@ -13,7 +13,8 @@ try:
 except ImportError as e:
     raise ImportError(
         "pet-annotation requires pet-infra to be installed first. "
-        "Install via 'pip install pet-infra @ git+https://github.com/Train-Pet-Pipeline/pet-infra@<tag>' "
+        "Install via 'pip install pet-infra @ "
+        "git+https://github.com/Train-Pet-Pipeline/pet-infra@<tag>' "
         "using the tag pinned in pet-infra/docs/compatibility_matrix.yaml."
     ) from e
 
