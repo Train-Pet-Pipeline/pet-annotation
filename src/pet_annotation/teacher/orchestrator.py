@@ -1,8 +1,7 @@
 """Annotation orchestrator — stub for v2.0.0 4-paradigm schema.
 
 The orchestrator is being rewritten for the 4-table annotator-paradigm model.
-The old frame-based pipeline that relied on VisionAnnotationRow / ComparisonRecord
-has been removed in v2.0.0 (destructive rebuild).
+The old frame-based pipeline has been removed in v2.0.0 (destructive rebuild).
 """
 
 from __future__ import annotations
