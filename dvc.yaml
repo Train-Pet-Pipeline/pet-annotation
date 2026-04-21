@@ -1,6 +1,6 @@
 stages:
   annotate:
-    cmd: python -m pet_annotation.cli annotate
+    cmd: python -m pet_annotation.cli annotate --annotator llm --dry-run
     deps:
       - src/pet_annotation/teacher/
       - params.yaml
@@ -10,39 +10,3 @@ stages:
     outs:
       - reports/annotation_stats.json:
           cache: false
-
-  quality_check:
-    cmd: python -m pet_annotation.cli check
-    deps:
-      - src/pet_annotation/quality/
-      - reports/annotation_stats.json
-    params:
-      - annotation.review_sampling_rate
-      - annotation.low_confidence_threshold
-
-  generate_pairs:
-    cmd: python -m pet_annotation.dpo.generate_pairs
-    deps:
-      - src/pet_annotation/dpo/generate_pairs.py
-      - src/pet_annotation/dpo/validate_pairs.py
-    params:
-      - dpo.min_pairs_per_release
-    outs:
-      - reports/dpo_pairs_stats.json:
-          cache: false
-
-  export_sft:
-    cmd: python -m pet_annotation.cli export --format sft
-    deps:
-      - src/pet_annotation/export/to_sharegpt.py
-      - reports/annotation_stats.json
-    outs:
-      - exports/sft_train.jsonl
-
-  export_dpo:
-    cmd: python -m pet_annotation.cli export --format dpo
-    deps:
-      - src/pet_annotation/export/to_dpo_pairs.py
-      - reports/dpo_pairs_stats.json
-    outs:
-      - exports/dpo_pairs.jsonl

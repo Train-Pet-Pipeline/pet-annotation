@@ -1,11 +1,11 @@
 defaults:
   - /_global_/defaults
-  - /dataset@_global_.dataset: vision_annotations
+  - /dataset@_global_.dataset: llm_annotations
   - _self_
 
 recipe:
-  recipe_id: pet_annotation_vision
-  description: "pet-annotation smoke recipe — just loads the dataset plugin"
+  recipe_id: pet_annotation_llm
+  description: "pet-annotation smoke recipe — loads the llm_annotations dataset plugin"
   scope: single_repo
   owner_repo: pet-annotation
   schema_version: "2.0.0"
