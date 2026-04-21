@@ -1,4 +1,4 @@
-# Standard CI — copy to each repo's .github/workflows/ci.yml
+# Standard CI — pet-annotation v2.0.0
 name: CI
 
 on:
@@ -23,7 +23,13 @@ jobs:
       - name: Configure git for private repos
         run: git config --global url."https://x-access-token:${{ secrets.CROSS_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
-      - name: Install dependencies
+      - name: Install pet-infra (peer-dep)
+        run: pip install 'pet-infra @ git+https://github.com/Train-Pet-Pipeline/pet-infra@v2.1.0'
+
+      - name: Install pet-annotation (editable, no-deps)
+        run: pip install -e ".[dev]" --no-deps
+
+      - name: Re-resolve remaining deps
         run: pip install -e ".[dev]"
 
       - name: Lint
