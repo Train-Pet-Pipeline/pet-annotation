@@ -29,7 +29,6 @@ def route_annotation_to_store(ann, store) -> None:
         ValueError: If ``ann.annotator_type`` is not one of the 4 known paradigms.
     """
     t = getattr(ann, "annotator_type", None)
-    method_name = _ROUTES.get(t)
-    if method_name is None:
+    if not isinstance(t, str) or t not in _ROUTES:
         raise ValueError(f"unknown annotator_type: {t!r} (valid: {list(_ROUTES)})")
-    getattr(store, method_name)(ann)
+    getattr(store, _ROUTES[t])(ann)
