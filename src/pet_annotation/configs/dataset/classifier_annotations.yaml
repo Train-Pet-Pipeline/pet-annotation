@@ -1,4 +1,4 @@
-type: pet_annotation.vision_annotations
-modality: vision
+type: pet_annotation.classifier
+modality: multimodal
 args:
   db_path: ${oc.env:PET_ANNOTATION_DB,/data/pet-annotation/pet_annotation.db}

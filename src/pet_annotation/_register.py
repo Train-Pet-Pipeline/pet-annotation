@@ -8,12 +8,22 @@ convention — see ``pet_infra._register``) at CLI startup to trigger the
 
 from __future__ import annotations
 
+try:
+    import pet_infra  # noqa: F401
+except ImportError as e:
+    raise ImportError(
+        "pet-annotation requires pet-infra to be installed first. "
+        "Install via 'pip install pet-infra @ "
+        "git+https://github.com/Train-Pet-Pipeline/pet-infra@<tag>' "
+        "using the tag pinned in pet-infra/docs/compatibility_matrix.yaml."
+    ) from e
+
 
 def register_all() -> None:
-    """Import (or reload) pet-annotation plugin modules to trigger registration side-effects."""
-    import importlib
-
-    from pet_annotation.datasets import audio_annotations, vision_annotations
-
-    importlib.reload(vision_annotations)
-    importlib.reload(audio_annotations)
+    """Import pet-annotation plugin modules to trigger registration side-effects."""
+    from pet_annotation.datasets import (
+        classifier_annotations,  # noqa: F401
+        human_annotations,  # noqa: F401
+        llm_annotations,  # noqa: F401
+        rule_annotations,  # noqa: F401
+    )

@@ -1,104 +1,96 @@
-"""Tests for migration globbing and idempotency (Task B2)."""
+"""Tests for migration system — idempotency and schema correctness after 004."""
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 from pet_annotation.store import AnnotationStore
 
-# Minimal frames schema required by AnnotationStore._recover_stuck_frames.
-# frame_id is the FK target for annotations; annotation_status is updated on recovery.
-_FRAMES_STUB_DDL = (
-    "CREATE TABLE IF NOT EXISTS frames "
-    "(frame_id TEXT PRIMARY KEY, annotation_status TEXT NOT NULL DEFAULT 'pending')"
-)
 
-
-def _seed_frames(db_file: Path) -> None:
-    """Create a minimal frames table in *db_file* before AnnotationStore opens it."""
-    conn = sqlite3.connect(str(db_file))
-    conn.execute(_FRAMES_STUB_DDL)
-    conn.commit()
-    conn.close()
+def _table_names(store: AnnotationStore) -> set[str]:
+    """Return set of user-created table names in the DB."""
+    rows = store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    return {r[0] for r in rows}
 
 
 def _column_names(store: AnnotationStore, table: str) -> set[str]:
-    """Return the set of column names for a given table."""
+    """Return set of column names for *table*."""
     rows = store._conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return {row[1] for row in rows}
+    return {r[1] for r in rows}
 
 
 def _index_names(store: AnnotationStore) -> set[str]:
     """Return all index names from sqlite_master."""
     rows = store._conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
-    return {row[0] for row in rows}
+    return {r[0] for r in rows}
 
 
-def test_migration_002_adds_columns(tmp_path: Path) -> None:
-    """Fresh DB should have modality + storage_uri on annotations; modality on model_comparisons."""
-    db_file = tmp_path / "test.db"
-    _seed_frames(db_file)
-    store = AnnotationStore(db_path=db_file)
-
-    ann_cols = _column_names(store, "annotations")
-    assert "modality" in ann_cols, f"'modality' missing from annotations; got: {ann_cols}"
-    assert "storage_uri" in ann_cols, f"'storage_uri' missing from annotations; got: {ann_cols}"
-
-    cmp_cols = _column_names(store, "model_comparisons")
-    assert "modality" in cmp_cols, f"'modality' missing from model_comparisons; got: {cmp_cols}"
-
-    store.close()
+def test_migration_004_creates_four_tables(tmp_path: Path) -> None:
+    """After init_schema(), the 4 paradigm tables must exist."""
+    store = AnnotationStore(str(tmp_path / "t.db"))
+    store.init_schema()
+    tables = _table_names(store)
+    assert "llm_annotations" in tables
+    assert "classifier_annotations" in tables
+    assert "rule_annotations" in tables
+    assert "human_annotations" in tables
 
 
-def test_migration_002_creates_index(tmp_path: Path) -> None:
-    """Fresh DB should have idx_annotations_modality index."""
-    db_file = tmp_path / "test.db"
-    _seed_frames(db_file)
-    store = AnnotationStore(db_path=db_file)
+def test_migration_004_drops_old_tables(tmp_path: Path) -> None:
+    """Old annotations / audio_annotations / model_comparisons tables must not exist."""
+    store = AnnotationStore(str(tmp_path / "t.db"))
+    store.init_schema()
+    tables = _table_names(store)
+    assert "annotations" not in tables
+    assert "audio_annotations" not in tables
+    assert "model_comparisons" not in tables
 
+
+def test_migration_004_llm_table_columns(tmp_path: Path) -> None:
+    """llm_annotations must have all required columns."""
+    store = AnnotationStore(str(tmp_path / "t.db"))
+    store.init_schema()
+    cols = _column_names(store, "llm_annotations")
+    required = {
+        "annotation_id", "target_id", "annotator_id", "annotator_type",
+        "modality", "schema_version", "created_at", "storage_uri",
+        "prompt_hash", "raw_response", "parsed_output",
+    }
+    assert required <= cols, f"missing columns: {required - cols}"
+
+
+def test_migration_004_creates_indexes(tmp_path: Path) -> None:
+    """Expected indexes must be present after migration 004."""
+    store = AnnotationStore(str(tmp_path / "t.db"))
+    store.init_schema()
     indexes = _index_names(store)
-    assert "idx_annotations_modality" in indexes, (
-        f"'idx_annotations_modality' missing; got: {indexes}"
-    )
-
-    store.close()
-
-
-def test_migration_002_modality_default(tmp_path: Path) -> None:
-    """The modality column defaults to 'vision'."""
-    db_file = tmp_path / "test.db"
-    _seed_frames(db_file)
-    store = AnnotationStore(db_path=db_file)
-
-    store._conn.execute("INSERT INTO frames (frame_id) VALUES ('f1')")
-    store._conn.execute(
-        """
-        INSERT INTO annotations
-            (annotation_id, frame_id, model_name, prompt_hash, raw_response, schema_valid)
-        VALUES ('a1', 'f1', 'gpt-4o', 'h1', '{}', 1)
-        """
-    )
-    store._conn.commit()
-
-    row = store._conn.execute(
-        "SELECT modality FROM annotations WHERE annotation_id='a1'"
-    ).fetchone()
-    assert row[0] == "vision", f"Expected default 'vision', got: {row[0]}"
-
-    store.close()
+    assert "idx_llm_target" in indexes
+    assert "idx_cls_target" in indexes
+    assert "idx_rule_target" in indexes
+    assert "idx_human_target" in indexes
 
 
 def test_migration_idempotent_reopen(tmp_path: Path) -> None:
-    """Opening the store twice on the same DB must not raise (idempotent re-apply)."""
-    db_file = tmp_path / "test.db"
-    _seed_frames(db_file)
+    """Opening the store twice on the same DB must not raise."""
+    db = str(tmp_path / "idem.db")
+    s1 = AnnotationStore(db)
+    s1.init_schema()
 
-    store1 = AnnotationStore(db_path=db_file)
-    store1.close()
+    s2 = AnnotationStore(db)
+    s2.init_schema()  # must not fail
 
-    # Second open should re-run all migrations without error
-    store2 = AnnotationStore(db_path=db_file)
-    ann_cols = _column_names(store2, "annotations")
-    assert "modality" in ann_cols
-    store2.close()
+    tables = _table_names(s2)
+    assert "llm_annotations" in tables
+
+
+def test_applied_migrations_table_tracks_names(tmp_path: Path) -> None:
+    """_applied_migrations table must contain all 4 migration file names."""
+    store = AnnotationStore(str(tmp_path / "t.db"))
+    store.init_schema()
+    applied = {
+        r[0]
+        for r in store._conn.execute("SELECT name FROM _applied_migrations").fetchall()
+    }
+    assert "004_four_paradigm_tables.sql" in applied
