@@ -1,740 +1,320 @@
-"""AnnotationStore: all SQLite access for the pet-annotation pipeline.
+"""Annotation store — 4 annotator-paradigm tables.
 
-This module is the *only* place that touches the annotations and
-model_comparisons tables.  It also issues SELECT / UPDATE against the
-frames table (owned by pet-data) but never DDL on it.
-
-Usage (production)::
-
-    store = AnnotationStore(db_path=Path("/data/pet.db"))
-    with store:
-        rows = store.fetch_pending_frames(limit=32)
-
-Usage (tests)::
-
-    store = AnnotationStore(conn=in_memory_conn)
+Spec: docs/superpowers/specs/2026-04-21-phase-2-debt-repayment-design.md §2
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from dataclasses import dataclass, field
 from pathlib import Path
 
-import pet_schema
+from pet_schema import ClassifierAnnotation, HumanAnnotation, LLMAnnotation, RuleAnnotation
 
 _MIGRATIONS_DIR = Path(__file__).parent.parent.parent / "migrations"
+_APPLIED_MIGRATIONS_TABLE = "_applied_migrations"
 
 
-@dataclass
-class VisionAnnotationRow:
-    """Represents one row in the annotations (vision) table."""
-
-    annotation_id: str
-    frame_id: str
-    model_name: str
-    prompt_hash: str
-    raw_response: str
-    schema_valid: int
-    parsed_output: str | None = None
-    validation_errors: str | None = None
-    confidence_overall: float | None = None
-    review_status: str = "pending"
-    reviewer: str | None = None
-    review_notes: str | None = None
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    api_latency_ms: int | None = None
-    modality: str = "vision"
-    storage_uri: str | None = None
+def _dumps(d) -> str:
+    """Serialise dict/list to JSON string with sorted keys for determinism."""
+    return json.dumps(d, sort_keys=True, ensure_ascii=False)
 
 
-@dataclass
-class AudioAnnotationRow:
-    """Represents one row in the audio_annotations table."""
-
-    annotation_id: str
-    sample_id: str
-    annotator_type: str
-    annotator_id: str
-    predicted_class: str
-    class_probs: str
-    modality: str = "audio"
-    schema_version: str = field(default_factory=lambda: pet_schema.SCHEMA_VERSION)
-    logits: str | None = None
-
-
-@dataclass
-class ComparisonRecord:
-    """Represents one row in the model_comparisons table."""
-
-    comparison_id: str
-    frame_id: str
-    model_name: str
-    prompt_hash: str
-    raw_response: str
-    schema_valid: int
-    parsed_output: str | None = None
-    validation_errors: str | None = None
-    confidence_overall: float | None = None
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    api_latency_ms: int | None = None
-    modality: str = "vision"
+def _loads(s: str | None):
+    """Parse JSON string; return None if s is None."""
+    return json.loads(s) if s else None
 
 
 class AnnotationStore:
-    """SQLite-backed store for annotation and comparison data.
+    """SQLite-backed store for annotation data — 4 annotator-paradigm tables.
 
-    Accepts either an existing ``conn`` (for testing with :memory:) or a
-    ``db_path`` for production use.  On initialisation the migration SQL is
-    applied (idempotent via IF NOT EXISTS) and any frames stuck in the
-    ``annotating`` status are recovered to ``pending``.
+    Args:
+        db_path: Path string to the SQLite database file.
     """
 
-    def __init__(
-        self,
-        *,
-        conn: sqlite3.Connection | None = None,
-        db_path: Path | None = None,
-    ) -> None:
-        """Initialise the store.
+    def __init__(self, db_path: str) -> None:
+        """Initialise store and create migrations tracking table."""
+        self._conn = sqlite3.connect(db_path)
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        self._ensure_migrations_table()
 
-        Exactly one of *conn* or *db_path* must be supplied.
+    def init_schema(self) -> None:
+        """Run all migrations/ .sql files in sorted order (skip already-applied)."""
+        for mig_path in sorted(_MIGRATIONS_DIR.glob("*.sql")):
+            name = mig_path.name
+            if self._already_applied(name):
+                continue
+            self._apply_migration(name, mig_path.read_text())
 
-        Args:
-            conn: An existing SQLite connection (used in tests).
-            db_path: Path to the SQLite database file (used in production).
-
-        Raises:
-            ValueError: If neither or both arguments are supplied.
-        """
-        if conn is None and db_path is None:
-            raise ValueError("Provide either conn or db_path")
-        if conn is not None and db_path is not None:
-            raise ValueError("Provide either conn or db_path, not both")
-
-        if conn is not None:
-            self._conn = conn
-            self._owns_conn = False
-        else:
-            self._conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=30)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA busy_timeout=10000")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-            self._owns_conn = True
-
-        self._apply_migration()
-        self._recover_stuck_frames()
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _apply_migration(self) -> None:
-        """Run all annotation DDL migrations in sorted order (idempotent).
-
-        Globs ``migrations/*.sql`` sorted by filename and applies each statement
-        individually.  ``ALTER TABLE … ADD COLUMN`` statements that fail with
-        ``duplicate column name`` are silently skipped so that re-opening an
-        already-migrated database is safe.
-
-        Note: Migration files must not contain triggers or other BEGIN/END blocks;
-        the semicolon split is not parser-aware and will break on embedded semicolons
-        inside string literals or trigger bodies.
-        """
-        if not _MIGRATIONS_DIR.exists():
-            raise RuntimeError(f"Migrations directory not found: {_MIGRATIONS_DIR}")
-
-        for sql_file in sorted(_MIGRATIONS_DIR.glob("*.sql")):
-            sql = sql_file.read_text()
-            for stmt in sql.split(";"):
-                stmt = stmt.strip()
-                if not stmt:
-                    continue
-                try:
-                    self._conn.execute(stmt)
-                except sqlite3.OperationalError as e:
-                    if "duplicate column name" in str(e).lower():
-                        continue
-                    raise
-        self._conn.commit()
-
-    def _recover_stuck_frames(self) -> None:
-        """Reset frames stuck in 'annotating' back to 'pending' on startup."""
+    def _ensure_migrations_table(self) -> None:
+        """Create the _applied_migrations tracking table if it does not exist."""
         self._conn.execute(
-            "UPDATE frames SET annotation_status='pending' WHERE annotation_status='annotating'"
+            f"CREATE TABLE IF NOT EXISTS {_APPLIED_MIGRATIONS_TABLE} "
+            "(name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))"
         )
         self._conn.commit()
 
-    # ------------------------------------------------------------------
-    # Frame queries
-    # ------------------------------------------------------------------
-
-    def fetch_pending_frames(self, limit: int) -> list[sqlite3.Row]:
-        """Return up to *limit* frames with annotation_status='pending'.
-
-        Args:
-            limit: Maximum number of rows to return.
-
-        Returns:
-            List of sqlite3.Row objects from the frames table.
-        """
-        return self._conn.execute(
-            "SELECT * FROM frames WHERE annotation_status='pending' LIMIT ?",
-            (limit,),
-        ).fetchall()
-
-    def update_frame_status_batch(self, frame_ids: list[str], status: str) -> None:
-        """Update annotation_status for a batch of frames in one transaction.
-
-        Args:
-            frame_ids: List of frame_id values to update.
-            status: The new annotation_status value.
-        """
-        placeholders = ",".join("?" * len(frame_ids))
-        self._conn.execute(
-            f"UPDATE frames SET annotation_status=? WHERE frame_id IN ({placeholders})",
-            [status, *frame_ids],
-        )
-        self._conn.commit()
-
-    # ------------------------------------------------------------------
-    # Cache-hit checks
-    # ------------------------------------------------------------------
-
-    def cache_hit(self, frame_id: str, model_name: str, prompt_hash: str) -> bool:
-        """Return True if an annotation already exists for this cache key.
-
-        Args:
-            frame_id: The frame identifier.
-            model_name: The model that produced the annotation.
-            prompt_hash: Hash of the prompt used.
-
-        Returns:
-            True if a matching row exists in annotations, False otherwise.
-        """
+    def _already_applied(self, name: str) -> bool:
+        """Return True if migration *name* has already been recorded as applied."""
         row = self._conn.execute(
-            "SELECT 1 FROM annotations WHERE frame_id=? AND model_name=? AND prompt_hash=?",
-            (frame_id, model_name, prompt_hash),
+            f"SELECT 1 FROM {_APPLIED_MIGRATIONS_TABLE} WHERE name = ?", (name,)
         ).fetchone()
         return row is not None
 
-    def cache_hit_comparison(self, frame_id: str, model_name: str, prompt_hash: str) -> bool:
-        """Return True if a comparison already exists for this cache key.
-
-        Args:
-            frame_id: The frame identifier.
-            model_name: The model that produced the comparison.
-            prompt_hash: Hash of the prompt used.
-
-        Returns:
-            True if a matching row exists in model_comparisons, False otherwise.
-        """
-        row = self._conn.execute(
-            "SELECT 1 FROM model_comparisons WHERE frame_id=? AND model_name=? AND prompt_hash=?",
-            (frame_id, model_name, prompt_hash),
-        ).fetchone()
-        return row is not None
-
-    # ------------------------------------------------------------------
-    # Insert helpers
-    # ------------------------------------------------------------------
-
-    def insert_annotation(self, rec: VisionAnnotationRow | AudioAnnotationRow) -> None:
-        """Insert one row into the annotations or audio_annotations table.
-
-        Routes based on the record type:
-        - VisionAnnotationRow → inserts into ``annotations`` table.
-        - AudioAnnotationRow → inserts into ``audio_annotations`` table.
-
-        Args:
-            rec: The VisionAnnotationRow or AudioAnnotationRow to persist.
-        """
-        if isinstance(rec, AudioAnnotationRow):
-            self._conn.execute(
-                """
-                INSERT INTO audio_annotations (
-                    annotation_id, sample_id, annotator_type, annotator_id,
-                    modality, schema_version, predicted_class, class_probs, logits
-                ) VALUES (?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    rec.annotation_id,
-                    rec.sample_id,
-                    rec.annotator_type,
-                    rec.annotator_id,
-                    rec.modality,
-                    rec.schema_version,
-                    rec.predicted_class,
-                    rec.class_probs,
-                    rec.logits,
-                ),
-            )
-        else:
-            self._conn.execute(
-                """
-                INSERT INTO annotations (
-                    annotation_id, frame_id, model_name, prompt_hash,
-                    raw_response, parsed_output, schema_valid, validation_errors,
-                    confidence_overall, review_status, reviewer, review_notes,
-                    prompt_tokens, completion_tokens, total_tokens, api_latency_ms,
-                    modality, storage_uri
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    rec.annotation_id,
-                    rec.frame_id,
-                    rec.model_name,
-                    rec.prompt_hash,
-                    rec.raw_response,
-                    rec.parsed_output,
-                    rec.schema_valid,
-                    rec.validation_errors,
-                    rec.confidence_overall,
-                    rec.review_status,
-                    rec.reviewer,
-                    rec.review_notes,
-                    rec.prompt_tokens,
-                    rec.completion_tokens,
-                    rec.total_tokens,
-                    rec.api_latency_ms,
-                    rec.modality,
-                    rec.storage_uri,
-                ),
-            )
-        self._conn.commit()
-
-    def insert_annotation_and_update_status(
-        self, rec: VisionAnnotationRow, new_status: str
-    ) -> None:
-        """Atomically insert an annotation and update the frame's annotation_status.
-
-        Vision-only operation.  Raises ValueError if given an AudioAnnotationRow.
-
-        Args:
-            rec: The VisionAnnotationRow to persist.
-            new_status: The annotation_status value to set on the parent frame.
-
-        Raises:
-            ValueError: If *rec* is an AudioAnnotationRow.
-        """
-        if isinstance(rec, AudioAnnotationRow):
-            raise ValueError(
-                "insert_annotation_and_update_status is vision-only;"
-                " use insert_annotation for audio"
-            )
+    def _apply_migration(self, name: str, sql: str) -> None:
+        """Execute *sql* statements and record *name* as applied."""
+        for stmt in sql.split(";"):
+            stmt = stmt.strip()
+            if not stmt:
+                continue
+            self._conn.execute(stmt)
         self._conn.execute(
-            """
-            INSERT INTO annotations (
-                annotation_id, frame_id, model_name, prompt_hash,
-                raw_response, parsed_output, schema_valid, validation_errors,
-                confidence_overall, review_status, reviewer, review_notes,
-                prompt_tokens, completion_tokens, total_tokens, api_latency_ms,
-                modality, storage_uri
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                rec.annotation_id,
-                rec.frame_id,
-                rec.model_name,
-                rec.prompt_hash,
-                rec.raw_response,
-                rec.parsed_output,
-                rec.schema_valid,
-                rec.validation_errors,
-                rec.confidence_overall,
-                rec.review_status,
-                rec.reviewer,
-                rec.review_notes,
-                rec.prompt_tokens,
-                rec.completion_tokens,
-                rec.total_tokens,
-                rec.api_latency_ms,
-                rec.modality,
-                rec.storage_uri,
-            ),
-        )
-        self._conn.execute(
-            "UPDATE frames SET annotation_status=? WHERE frame_id=?",
-            (new_status, rec.frame_id),
+            f"INSERT INTO {_APPLIED_MIGRATIONS_TABLE}(name) VALUES (?)", (name,)
         )
         self._conn.commit()
 
-    def insert_comparison(self, rec: ComparisonRecord) -> None:
-        """Insert one row into the model_comparisons table.
+    # ---- LLM ----
+
+    def insert_llm(self, ann: LLMAnnotation) -> None:
+        """Insert an LLMAnnotation row into llm_annotations.
 
         Args:
-            rec: The ComparisonRecord to persist.
+            ann: The LLMAnnotation to persist.
         """
         self._conn.execute(
-            """
-            INSERT INTO model_comparisons (
-                comparison_id, frame_id, model_name, prompt_hash,
-                raw_response, parsed_output, schema_valid, validation_errors,
-                confidence_overall, prompt_tokens, completion_tokens, total_tokens, api_latency_ms,
-                modality
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
+            "INSERT INTO llm_annotations"
+            "(annotation_id, target_id, annotator_id, annotator_type, "
+            "modality, schema_version, created_at, storage_uri, "
+            "prompt_hash, raw_response, parsed_output) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
-                rec.comparison_id,
-                rec.frame_id,
-                rec.model_name,
-                rec.prompt_hash,
-                rec.raw_response,
-                rec.parsed_output,
-                rec.schema_valid,
-                rec.validation_errors,
-                rec.confidence_overall,
-                rec.prompt_tokens,
-                rec.completion_tokens,
-                rec.total_tokens,
-                rec.api_latency_ms,
-                rec.modality,
+                ann.annotation_id,
+                ann.target_id,
+                ann.annotator_id,
+                ann.annotator_type,
+                ann.modality,
+                ann.schema_version,
+                ann.created_at.isoformat(),
+                ann.storage_uri,
+                ann.prompt_hash,
+                ann.raw_response,
+                _dumps(ann.parsed_output),
             ),
         )
         self._conn.commit()
 
-    # ------------------------------------------------------------------
-    # Retrieval helpers
-    # ------------------------------------------------------------------
-
-    def get_annotation(
-        self,
-        key: str,
-        model_name: str | None = None,
-        prompt_hash: str | None = None,
-        *,
-        modality: str = "vision",
-    ) -> VisionAnnotationRow | AudioAnnotationRow | None:
-        """Retrieve an annotation by its lookup key and modality.
-
-        For vision annotations *key* is the frame_id and *model_name* +
-        *prompt_hash* are also required.  For audio annotations *key* is the
-        sample_id and the other parameters are unused.
+    def fetch_llm_by_target(self, target_id: str) -> list[LLMAnnotation]:
+        """Fetch all LLMAnnotation rows for *target_id*.
 
         Args:
-            key: frame_id (vision) or sample_id (audio).
-            model_name: Model name — required for vision, ignored for audio.
-            prompt_hash: Prompt hash — required for vision, ignored for audio.
-            modality: One of ``"vision"`` or ``"audio"``.
+            target_id: The target identifier to filter by.
 
         Returns:
-            A VisionAnnotationRow or AudioAnnotationRow, or None if not found.
-
-        Raises:
-            ValueError: If modality is ``"vision"`` and model_name or prompt_hash
-                is None.
+            List of LLMAnnotation objects.
         """
-        if modality == "audio":
-            row = self._conn.execute(
-                "SELECT * FROM audio_annotations WHERE sample_id=?",
-                (key,),
-            ).fetchone()
-            if row is None:
-                return None
-            return AudioAnnotationRow(
-                annotation_id=row["annotation_id"],
-                sample_id=row["sample_id"],
-                annotator_type=row["annotator_type"],
-                annotator_id=row["annotator_id"],
-                predicted_class=row["predicted_class"],
-                class_probs=row["class_probs"],
-                modality=row["modality"],
-                schema_version=row["schema_version"],
-                logits=row["logits"],
+        cur = self._conn.execute(
+            "SELECT annotation_id, target_id, annotator_id, annotator_type, modality, "
+            "schema_version, created_at, storage_uri, prompt_hash, raw_response, parsed_output "
+            "FROM llm_annotations WHERE target_id = ?",
+            (target_id,),
+        )
+        return [
+            LLMAnnotation(
+                annotation_id=r[0],
+                target_id=r[1],
+                annotator_id=r[2],
+                annotator_type=r[3],
+                modality=r[4],
+                schema_version=r[5],
+                created_at=r[6],
+                storage_uri=r[7],
+                prompt_hash=r[8],
+                raw_response=r[9],
+                parsed_output=_loads(r[10]),
             )
+            for r in cur.fetchall()
+        ]
 
-        # vision path
-        if model_name is None or prompt_hash is None:
-            raise ValueError("model_name and prompt_hash are required for vision modality")
-        row = self._conn.execute(
-            """
-            SELECT * FROM annotations
-            WHERE frame_id=? AND model_name=? AND prompt_hash=?
-            """,
-            (key, model_name, prompt_hash),
-        ).fetchone()
-        if row is None:
-            return None
-        return VisionAnnotationRow(
-            annotation_id=row["annotation_id"],
-            frame_id=row["frame_id"],
-            model_name=row["model_name"],
-            prompt_hash=row["prompt_hash"],
-            raw_response=row["raw_response"],
-            parsed_output=row["parsed_output"],
-            schema_valid=row["schema_valid"],
-            validation_errors=row["validation_errors"],
-            confidence_overall=row["confidence_overall"],
-            review_status=row["review_status"],
-            reviewer=row["reviewer"],
-            review_notes=row["review_notes"],
-            prompt_tokens=row["prompt_tokens"],
-            completion_tokens=row["completion_tokens"],
-            total_tokens=row["total_tokens"],
-            api_latency_ms=row["api_latency_ms"],
-            modality=row["modality"],
-            storage_uri=row["storage_uri"],
-        )
+    # ---- Classifier ----
 
-    def get_comparison(
-        self, frame_id: str, model_name: str, prompt_hash: str
-    ) -> ComparisonRecord | None:
-        """Retrieve a comparison by its cache key triple.
+    def insert_classifier(self, ann: ClassifierAnnotation) -> None:
+        """Insert a ClassifierAnnotation row into classifier_annotations.
 
         Args:
-            frame_id: The frame identifier.
-            model_name: The model that produced the comparison.
-            prompt_hash: Hash of the prompt used.
-
-        Returns:
-            A ComparisonRecord, or None if not found.
-        """
-        row = self._conn.execute(
-            """
-            SELECT * FROM model_comparisons
-            WHERE frame_id=? AND model_name=? AND prompt_hash=?
-            """,
-            (frame_id, model_name, prompt_hash),
-        ).fetchone()
-        if row is None:
-            return None
-        return ComparisonRecord(
-            comparison_id=row["comparison_id"],
-            frame_id=row["frame_id"],
-            model_name=row["model_name"],
-            prompt_hash=row["prompt_hash"],
-            raw_response=row["raw_response"],
-            parsed_output=row["parsed_output"],
-            schema_valid=row["schema_valid"],
-            validation_errors=row["validation_errors"],
-            confidence_overall=row["confidence_overall"],
-            prompt_tokens=row["prompt_tokens"],
-            completion_tokens=row["completion_tokens"],
-            total_tokens=row["total_tokens"],
-            api_latency_ms=row["api_latency_ms"],
-            modality=row["modality"],
-        )
-
-    # ------------------------------------------------------------------
-    # Reporting / pipeline queries
-    # ------------------------------------------------------------------
-
-    def fetch_approved_annotations(
-        self, limit: int, *, modality: str = "vision"
-    ) -> list[sqlite3.Row]:
-        """Return annotations with review_status in ('approved', 'reviewed'), joined to frames.
-
-        Args:
-            limit: Maximum number of rows to return.
-            modality: Filter rows to this modality (default ``"vision"``).
-
-        Returns:
-            List of sqlite3.Row objects joining annotations and frames.
-        """
-        return self._conn.execute(
-            """
-            SELECT a.*, f.frame_path, f.video_id, f.source, f.species, f.breed
-            FROM annotations a
-            JOIN frames f ON a.frame_id = f.frame_id
-            WHERE a.review_status IN ('approved', 'reviewed')
-              AND a.modality = ?
-            LIMIT ?
-            """,
-            (modality, limit),
-        ).fetchall()
-
-    def fetch_audio_annotations(self, limit: int | None = None) -> list[sqlite3.Row]:
-        """Return rows from audio_annotations, optionally capped by limit.
-
-        The audio_annotations table has no review_status column, so all rows
-        are returned.  The caller (to_audio_labels.py) is responsible for
-        filtering or post-processing if needed.
-
-        Args:
-            limit: Maximum number of rows to return.  ``None`` means no cap.
-
-        Returns:
-            List of sqlite3.Row objects from the audio_annotations table.
-        """
-        if limit is None:
-            return self._conn.execute(
-                "SELECT * FROM audio_annotations ORDER BY created_at",
-            ).fetchall()
-        return self._conn.execute(
-            "SELECT * FROM audio_annotations ORDER BY created_at LIMIT ?",
-            (limit,),
-        ).fetchall()
-
-    def fetch_comparisons_for_frame(
-        self, frame_id: str, *, modality: str = "vision"
-    ) -> list[sqlite3.Row]:
-        """Return comparison rows for a given frame filtered by modality.
-
-        Args:
-            frame_id: The frame to look up comparisons for.
-            modality: Filter rows to this modality (default ``"vision"``).
-
-        Returns:
-            List of sqlite3.Row objects from model_comparisons.
-        """
-        return self._conn.execute(
-            "SELECT * FROM model_comparisons WHERE frame_id=? AND modality=? ORDER BY created_at",
-            (frame_id, modality),
-        ).fetchall()
-
-    def fetch_auto_checked_annotations(self, primary_model: str) -> list[sqlite3.Row]:
-        """Return annotations produced by *primary_model* that are pending quality review.
-
-        Used by the quality-check module to find annotations ready for
-        automated QA before human review.
-
-        Args:
-            primary_model: Name of the primary annotation model.
-
-        Returns:
-            List of sqlite3.Row objects from annotations where review_status='pending'.
-        """
-        return self._conn.execute(
-            """
-            SELECT * FROM annotations
-            WHERE model_name=? AND review_status='pending'
-            ORDER BY created_at
-            """,
-            (primary_model,),
-        ).fetchall()
-
-    def fetch_needs_review_annotations(self) -> list[sqlite3.Row]:
-        """Return annotations with review_status='needs_review', joined to frames.
-
-        Used by Label Studio import to build review tasks.
-
-        Returns:
-            List of sqlite3.Row objects joining annotations and frames.
-        """
-        return self._conn.execute(
-            """
-            SELECT a.*, f.frame_path, f.data_root, f.species, f.breed
-            FROM annotations a
-            JOIN frames f ON a.frame_id = f.frame_id
-            WHERE a.review_status = 'needs_review'
-            ORDER BY a.created_at
-            """,
-        ).fetchall()
-
-    def update_annotation_parsed_output(self, annotation_id: str, parsed_output: str) -> None:
-        """Overwrite parsed_output for an annotation (human correction).
-
-        Args:
-            annotation_id: Primary key of the annotation.
-            parsed_output: The corrected JSON output.
+            ann: The ClassifierAnnotation to persist.
         """
         self._conn.execute(
-            "UPDATE annotations SET parsed_output=? WHERE annotation_id=?",
-            (parsed_output, annotation_id),
+            "INSERT INTO classifier_annotations"
+            "(annotation_id, target_id, annotator_id, annotator_type, "
+            "modality, schema_version, created_at, storage_uri, "
+            "predicted_class, class_probs, logits) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                ann.annotation_id,
+                ann.target_id,
+                ann.annotator_id,
+                ann.annotator_type,
+                ann.modality,
+                ann.schema_version,
+                ann.created_at.isoformat(),
+                ann.storage_uri,
+                ann.predicted_class,
+                _dumps(ann.class_probs),
+                _dumps(ann.logits) if ann.logits is not None else None,
+            ),
         )
         self._conn.commit()
 
-    # ------------------------------------------------------------------
-    # Review-status mutations
-    # ------------------------------------------------------------------
-
-    def update_review_status(self, annotation_id: str, status: str) -> None:
-        """Update the review_status of a single annotation.
+    def fetch_classifier_by_target(self, target_id: str) -> list[ClassifierAnnotation]:
+        """Fetch all ClassifierAnnotation rows for *target_id*.
 
         Args:
-            annotation_id: Primary key of the annotation to update.
-            status: New review_status value.
+            target_id: The target identifier to filter by.
+
+        Returns:
+            List of ClassifierAnnotation objects.
+        """
+        cur = self._conn.execute(
+            "SELECT annotation_id, target_id, annotator_id, annotator_type, modality, "
+            "schema_version, created_at, storage_uri, predicted_class, class_probs, logits "
+            "FROM classifier_annotations WHERE target_id = ?",
+            (target_id,),
+        )
+        return [
+            ClassifierAnnotation(
+                annotation_id=r[0],
+                target_id=r[1],
+                annotator_id=r[2],
+                annotator_type=r[3],
+                modality=r[4],
+                schema_version=r[5],
+                created_at=r[6],
+                storage_uri=r[7],
+                predicted_class=r[8],
+                class_probs=_loads(r[9]),
+                logits=_loads(r[10]),
+            )
+            for r in cur.fetchall()
+        ]
+
+    # ---- Rule ----
+
+    def insert_rule(self, ann: RuleAnnotation) -> None:
+        """Insert a RuleAnnotation row into rule_annotations.
+
+        Args:
+            ann: The RuleAnnotation to persist.
         """
         self._conn.execute(
-            "UPDATE annotations SET review_status=? WHERE annotation_id=?",
-            (status, annotation_id),
+            "INSERT INTO rule_annotations"
+            "(annotation_id, target_id, annotator_id, annotator_type, "
+            "modality, schema_version, created_at, storage_uri, "
+            "rule_id, rule_output) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                ann.annotation_id,
+                ann.target_id,
+                ann.annotator_id,
+                ann.annotator_type,
+                ann.modality,
+                ann.schema_version,
+                ann.created_at.isoformat(),
+                ann.storage_uri,
+                ann.rule_id,
+                _dumps(ann.rule_output),
+            ),
         )
         self._conn.commit()
 
-    def update_review_and_frame_status(
-        self,
-        annotation_id: str,
-        review_status: str,
-        frame_id: str,
-        frame_status: str,
-    ) -> None:
-        """Atomically update annotation review_status and frame annotation_status.
+    def fetch_rule_by_target(self, target_id: str) -> list[RuleAnnotation]:
+        """Fetch all RuleAnnotation rows for *target_id*.
 
         Args:
-            annotation_id: Primary key of the annotation to update.
-            review_status: New review_status for the annotation.
-            frame_id: Primary key of the frame to update.
-            frame_status: New annotation_status for the frame.
+            target_id: The target identifier to filter by.
+
+        Returns:
+            List of RuleAnnotation objects.
+        """
+        cur = self._conn.execute(
+            "SELECT annotation_id, target_id, annotator_id, annotator_type, modality, "
+            "schema_version, created_at, storage_uri, rule_id, rule_output "
+            "FROM rule_annotations WHERE target_id = ?",
+            (target_id,),
+        )
+        return [
+            RuleAnnotation(
+                annotation_id=r[0],
+                target_id=r[1],
+                annotator_id=r[2],
+                annotator_type=r[3],
+                modality=r[4],
+                schema_version=r[5],
+                created_at=r[6],
+                storage_uri=r[7],
+                rule_id=r[8],
+                rule_output=_loads(r[9]),
+            )
+            for r in cur.fetchall()
+        ]
+
+    # ---- Human ----
+
+    def insert_human(self, ann: HumanAnnotation) -> None:
+        """Insert a HumanAnnotation row into human_annotations.
+
+        Args:
+            ann: The HumanAnnotation to persist.
         """
         self._conn.execute(
-            "UPDATE annotations SET review_status=? WHERE annotation_id=?",
-            (review_status, annotation_id),
-        )
-        self._conn.execute(
-            "UPDATE frames SET annotation_status=? WHERE frame_id=?",
-            (frame_status, frame_id),
+            "INSERT INTO human_annotations"
+            "(annotation_id, target_id, annotator_id, annotator_type, "
+            "modality, schema_version, created_at, storage_uri, "
+            "reviewer, decision, notes) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                ann.annotation_id,
+                ann.target_id,
+                ann.annotator_id,
+                ann.annotator_type,
+                ann.modality,
+                ann.schema_version,
+                ann.created_at.isoformat(),
+                ann.storage_uri,
+                ann.reviewer,
+                ann.decision,
+                ann.notes,
+            ),
         )
         self._conn.commit()
 
-    # ------------------------------------------------------------------
-    # Aggregate stats
-    # ------------------------------------------------------------------
+    def fetch_human_by_target(self, target_id: str) -> list[HumanAnnotation]:
+        """Fetch all HumanAnnotation rows for *target_id*.
 
-    def get_status_counts(self) -> list[sqlite3.Row]:
-        """Return frame counts grouped by annotation_status.
-
-        Returns:
-            List of sqlite3.Row with columns (annotation_status, count).
-        """
-        return self._conn.execute(
-            "SELECT annotation_status, COUNT(*) AS count FROM frames GROUP BY annotation_status"
-        ).fetchall()
-
-    def get_model_stats(self) -> list[sqlite3.Row]:
-        """Return per-model annotation statistics including token usage.
+        Args:
+            target_id: The target identifier to filter by.
 
         Returns:
-            List of sqlite3.Row with columns
-            (model_name, annotation_count, total_tokens_sum).
+            List of HumanAnnotation objects.
         """
-        return self._conn.execute(
-            """
-            SELECT
-                model_name,
-                COUNT(*) AS annotation_count,
-                SUM(total_tokens) AS total_tokens_sum
-            FROM annotations
-            GROUP BY model_name
-            ORDER BY model_name
-            """
-        ).fetchall()
-
-    # ------------------------------------------------------------------
-    # Context manager / lifecycle
-    # ------------------------------------------------------------------
-
-    def close(self) -> None:
-        """Close the underlying database connection if this store owns it."""
-        if self._owns_conn:
-            self._conn.close()
-
-    def __enter__(self) -> AnnotationStore:
-        """Support use as a context manager."""
-        return self
-
-    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
-        """Close the store on context manager exit."""
-        self.close()
-
-
-# ---------------------------------------------------------------------------
-# Back-compat alias — keeps existing orchestrator / export code unmodified
-# ---------------------------------------------------------------------------
-
-#: Alias for VisionAnnotationRow.  Retained for backward compatibility.
-AnnotationRecord = VisionAnnotationRow
+        cur = self._conn.execute(
+            "SELECT annotation_id, target_id, annotator_id, annotator_type, modality, "
+            "schema_version, created_at, storage_uri, reviewer, decision, notes "
+            "FROM human_annotations WHERE target_id = ?",
+            (target_id,),
+        )
+        return [
+            HumanAnnotation(
+                annotation_id=r[0],
+                target_id=r[1],
+                annotator_id=r[2],
+                annotator_type=r[3],
+                modality=r[4],
+                schema_version=r[5],
+                created_at=r[6],
+                storage_uri=r[7],
+                reviewer=r[8],
+                decision=r[9],
+                notes=r[10],
+            )
+            for r in cur.fetchall()
+        ]
