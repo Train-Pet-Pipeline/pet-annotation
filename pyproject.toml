@@ -8,6 +8,7 @@ build-backend = "setuptools.build_meta"
 name = "pet-annotation"
 version = "2.0.0"
 requires-python = ">=3.11,<3.12"
+license = {text = "BUSL-1.1"}
 dependencies = [
     "pet-schema @ git+https://github.com/Train-Pet-Pipeline/pet-schema.git@v2.1.0",
     "aiohttp>=3.9,<4.0",
