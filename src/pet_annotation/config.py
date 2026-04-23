@@ -192,6 +192,40 @@ class RuleParadigmConfig(BaseModel):
     max_concurrent: int = 8
 
 
+class HumanAnnotatorConfig(BaseModel):
+    """Configuration for a single human annotator in the Phase 4 paradigm orchestrator.
+
+    Attributes:
+        id: Annotator identifier stored as annotator_id in annotation_targets.
+        ls_base_url: Label Studio instance URL (e.g. http://localhost:8080).
+        ls_project_id: Label Studio project ID to submit tasks to.
+        ls_api_token_env: Name of the env var holding the LS API token (not the token itself).
+        annotation_template: Template name in ls_templates/ for task rendering.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    ls_base_url: str
+    ls_project_id: int
+    ls_api_token_env: str = "LABEL_STUDIO_TOKEN"
+    annotation_template: str = "default"
+
+
+class HumanParadigmConfig(BaseModel):
+    """Configuration for the human annotator paradigm (Phase 4 orchestrator).
+
+    Attributes:
+        annotators: List of human annotator configs. N=0 is valid (no human annotation).
+        batch_size: Number of tasks per submit/pull batch.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    annotators: list[HumanAnnotatorConfig] = []
+    batch_size: int = 50
+
+
 class AnnotationConfig(BaseModel):
     """Top-level configuration object for the pet-annotation pipeline."""
 
@@ -203,6 +237,7 @@ class AnnotationConfig(BaseModel):
     llm: LLMParadigmConfig = LLMParadigmConfig()
     classifier: ClassifierParadigmConfig = ClassifierParadigmConfig()
     rule: RuleParadigmConfig = RuleParadigmConfig()
+    human: HumanParadigmConfig = HumanParadigmConfig()
 
 
 # ---------------------------------------------------------------------------

@@ -449,3 +449,111 @@ def test_annotation_config_has_rule_field_with_default(minimal_params: Path) -> 
     assert hasattr(cfg, "rule")
     assert isinstance(cfg.rule, RuleParadigmConfig)
     assert cfg.rule.annotators == []
+
+
+# ---------------------------------------------------------------------------
+# HumanAnnotatorConfig / HumanParadigmConfig tests (Phase 4 Subagent D)
+# ---------------------------------------------------------------------------
+
+
+def test_human_paradigm_config_empty_annotators_default() -> None:
+    """HumanParadigmConfig default has empty annotators list (N=0 valid)."""
+    from pet_annotation.config import HumanParadigmConfig
+
+    cfg = HumanParadigmConfig()
+    assert cfg.annotators == []
+    assert cfg.batch_size == 50
+
+
+def test_human_annotator_config_valid() -> None:
+    """HumanAnnotatorConfig validates all required and optional fields."""
+    from pet_annotation.config import HumanAnnotatorConfig
+
+    cfg = HumanAnnotatorConfig(
+        id="ls-project-1",
+        ls_base_url="http://localhost:8080",
+        ls_project_id=1,
+        ls_api_token_env="LABEL_STUDIO_TOKEN",
+        annotation_template="default",
+    )
+    assert cfg.id == "ls-project-1"
+    assert cfg.ls_base_url == "http://localhost:8080"
+    assert cfg.ls_project_id == 1
+    assert cfg.ls_api_token_env == "LABEL_STUDIO_TOKEN"
+    assert cfg.annotation_template == "default"
+
+
+def test_human_annotator_config_defaults() -> None:
+    """HumanAnnotatorConfig uses correct defaults for optional fields."""
+    from pet_annotation.config import HumanAnnotatorConfig
+
+    cfg = HumanAnnotatorConfig(
+        id="ls-1",
+        ls_base_url="http://localhost:8080",
+        ls_project_id=42,
+    )
+    assert cfg.ls_api_token_env == "LABEL_STUDIO_TOKEN"
+    assert cfg.annotation_template == "default"
+
+
+def test_human_annotator_config_extra_forbid() -> None:
+    """HumanAnnotatorConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import HumanAnnotatorConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        HumanAnnotatorConfig(
+            id="ls-1",
+            ls_base_url="http://localhost:8080",
+            ls_project_id=1,
+            unknown_field="oops",
+        )
+
+
+def test_human_paradigm_config_extra_forbid() -> None:
+    """HumanParadigmConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import HumanParadigmConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        HumanParadigmConfig(annotators=[], unknown_field="oops")
+
+
+def test_human_paradigm_with_one_annotator() -> None:
+    """HumanParadigmConfig with 1 annotator parses correctly."""
+    from pet_annotation.config import HumanParadigmConfig
+
+    cfg = HumanParadigmConfig(
+        annotators=[
+            {
+                "id": "ls-project-1",
+                "ls_base_url": "http://localhost:8080",
+                "ls_project_id": 1,
+            }
+        ]
+    )
+    assert len(cfg.annotators) == 1
+    assert cfg.annotators[0].id == "ls-project-1"
+
+
+def test_annotation_config_has_human_field_with_default(minimal_params: Path) -> None:
+    """AnnotationConfig parsed from minimal params has human field with default."""
+    from pet_annotation.config import HumanParadigmConfig
+
+    cfg = load_config(minimal_params)
+    assert hasattr(cfg, "human")
+    assert isinstance(cfg.human, HumanParadigmConfig)
+    assert cfg.human.annotators == []
+
+
+def test_params_yaml_has_human_section() -> None:
+    """Verify that the actual params.yaml includes a human section."""
+    import yaml
+
+    params_path = Path(__file__).parent.parent / "params.yaml"
+    params = yaml.safe_load(params_path.read_text())
+    assert "human" in params
+    assert params["human"]["batch_size"] == 50
+    assert params["human"]["annotators"] == []

@@ -89,6 +89,17 @@ rule:
   batch_size: 50
   max_concurrent: 8
 
+human:
+  annotators: []  # default: no human annotators configured. Override per experiment.
+  # Example populated config:
+  # annotators:
+  #   - id: "ls-project-1"
+  #     ls_base_url: "http://localhost:8080"
+  #     ls_project_id: 1
+  #     ls_api_token_env: "LABEL_STUDIO_TOKEN"  # env var name (not the token itself)
+  #     annotation_template: "default"
+  batch_size: 50
+
 quality:
   anomaly_threshold: 0.3
 
