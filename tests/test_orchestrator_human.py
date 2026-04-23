@@ -9,10 +9,9 @@ Covers:
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -24,7 +23,6 @@ from pet_annotation.config import (
 )
 from pet_annotation.store import AnnotationStore
 from pet_annotation.teacher.orchestrator import AnnotationOrchestrator
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -168,7 +166,7 @@ async def test_human_submit_path_sends_tasks_with_storage_uri(tmp_path: Path) ->
         ),
     ):
         orch = AnnotationOrchestrator(cfg, store, pet_db)
-        stats = await orch.run(paradigms=["human"])
+        await orch.run(paradigms=["human"])
 
     # All 3 tasks should have been submitted
     assert len(submitted_tasks) == 3
@@ -382,7 +380,7 @@ async def test_human_submit_storage_uri_fallback_to_target_id(tmp_path: Path) ->
         ),
     ):
         orch = AnnotationOrchestrator(cfg, store, pet_db)
-        stats = await orch.run(paradigms=["human"])
+        await orch.run(paradigms=["human"])
 
     assert len(submitted_tasks) == 1
     # Fallback: data.image = target_id when storage_uri is None

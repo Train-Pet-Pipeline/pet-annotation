@@ -11,17 +11,14 @@ TDD:
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
-import pytest
 import yaml
 from click.testing import CliRunner
 
 from pet_annotation.cli import cli
 from pet_annotation.store import AnnotationStore
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -163,7 +160,7 @@ def test_to_sft_samples_writes_jsonl_file(tmp_path: Path) -> None:
     _seed_llm_annotations(store, ["f1", "f2", "f3"])
 
     out = tmp_path / "output" / "sft.jsonl"
-    samples = to_sft_samples(store, annotator_type="llm", output_path=out)
+    to_sft_samples(store, annotator_type="llm", output_path=out)
 
     assert out.exists()
     lines = out.read_text().strip().split("\n")
