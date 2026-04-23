@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import yaml
 from pet_infra.logging import setup_logging as _infra_setup_logging
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -122,6 +122,76 @@ class DpoParams(BaseModel):
     min_pairs_per_release: int = 500
 
 
+class ClassifierAnnotatorConfig(BaseModel):
+    """Configuration for a single classifier annotator in the Phase 4 paradigm orchestrator.
+
+    Attributes:
+        id: Annotator identifier stored as annotator_id in annotation_targets.
+        plugin: Entry-point name for the classifier plugin, e.g. 'audio_cnn_classifier'.
+        model_path: Local filesystem path to classifier weights.
+        device: Inference device, e.g. 'cpu' or 'cuda:0'.
+        extra_params: Plugin-specific kwargs passed through at inference time.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    plugin: str
+    model_path: str
+    device: str = "cpu"
+    extra_params: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClassifierParadigmConfig(BaseModel):
+    """Configuration for the classifier annotator paradigm (Phase 4 orchestrator).
+
+    Attributes:
+        annotators: List of classifier annotator configs. N=0 is valid (no classifier annotation).
+        batch_size: Number of targets to claim per batch.
+        max_concurrent: Maximum number of concurrent inference threads.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    annotators: list[ClassifierAnnotatorConfig] = []
+    batch_size: int = 16
+    max_concurrent: int = 2
+
+
+class RuleAnnotatorConfig(BaseModel):
+    """Configuration for a single rule annotator in the Phase 4 paradigm orchestrator.
+
+    Attributes:
+        id: Annotator identifier stored as annotator_id in annotation_targets.
+        plugin: Entry-point name for the rule plugin, e.g. 'brightness_rule'.
+        rule_id: Rule identifier stored in rule_annotations.rule_id.
+        extra_params: Plugin-specific kwargs passed through at apply time.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    plugin: str
+    rule_id: str
+    extra_params: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuleParadigmConfig(BaseModel):
+    """Configuration for the rule annotator paradigm (Phase 4 orchestrator).
+
+    Attributes:
+        annotators: List of rule annotator configs. N=0 is valid (no rule annotation).
+        batch_size: Number of targets to claim per batch.
+        max_concurrent: Maximum number of concurrent rule threads.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    annotators: list[RuleAnnotatorConfig] = []
+    batch_size: int = 50
+    max_concurrent: int = 8
+
+
 class AnnotationConfig(BaseModel):
     """Top-level configuration object for the pet-annotation pipeline."""
 
@@ -131,6 +201,8 @@ class AnnotationConfig(BaseModel):
     quality: QualityParams = QualityParams()
     dpo: DpoParams
     llm: LLMParadigmConfig = LLMParadigmConfig()
+    classifier: ClassifierParadigmConfig = ClassifierParadigmConfig()
+    rule: RuleParadigmConfig = RuleParadigmConfig()
 
 
 # ---------------------------------------------------------------------------

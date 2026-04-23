@@ -229,3 +229,223 @@ def test_annotation_params_pet_data_db_path_default() -> None:
 
     params = AnnotationParams(primary_model="x")
     assert params.pet_data_db_path == "/data/pet-data/pet_data.db"
+
+
+# ---------------------------------------------------------------------------
+# ClassifierAnnotatorConfig / ClassifierParadigmConfig tests (Phase 4 Subagent C)
+# ---------------------------------------------------------------------------
+
+
+def test_classifier_paradigm_config_empty_annotators_default() -> None:
+    """ClassifierParadigmConfig default has empty annotators list (N=0 valid)."""
+    from pet_annotation.config import ClassifierParadigmConfig
+
+    cfg = ClassifierParadigmConfig()
+    assert cfg.annotators == []
+    assert cfg.batch_size == 16
+    assert cfg.max_concurrent == 2
+
+
+def test_classifier_annotator_config_valid() -> None:
+    """ClassifierAnnotatorConfig validates all required and optional fields."""
+    from pet_annotation.config import ClassifierAnnotatorConfig
+
+    cfg = ClassifierAnnotatorConfig(
+        id="feeding-activity-v1",
+        plugin="audio_cnn_classifier",
+        model_path="/models/feeding_cnn_v1.pt",
+        device="cpu",
+    )
+    assert cfg.id == "feeding-activity-v1"
+    assert cfg.plugin == "audio_cnn_classifier"
+    assert cfg.model_path == "/models/feeding_cnn_v1.pt"
+    assert cfg.device == "cpu"
+    assert cfg.extra_params == {}
+
+
+def test_classifier_annotator_config_extra_params() -> None:
+    """ClassifierAnnotatorConfig stores plugin-specific extra_params."""
+    from pet_annotation.config import ClassifierAnnotatorConfig
+
+    cfg = ClassifierAnnotatorConfig(
+        id="cnn-v2",
+        plugin="audio_cnn_classifier",
+        model_path="/m.pt",
+        extra_params={"top_k": 3, "threshold": 0.5},
+    )
+    assert cfg.extra_params["top_k"] == 3
+    assert cfg.extra_params["threshold"] == 0.5
+
+
+def test_classifier_annotator_config_extra_forbid() -> None:
+    """ClassifierAnnotatorConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import ClassifierAnnotatorConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ClassifierAnnotatorConfig(
+            id="x",
+            plugin="y",
+            model_path="/z",
+            unknown_field="oops",
+        )
+
+
+def test_classifier_paradigm_config_extra_forbid() -> None:
+    """ClassifierParadigmConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import ClassifierParadigmConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ClassifierParadigmConfig(annotators=[], unknown_field="oops")
+
+
+def test_classifier_paradigm_with_one_annotator() -> None:
+    """ClassifierParadigmConfig with 1 annotator parses correctly."""
+    from pet_annotation.config import ClassifierParadigmConfig
+
+    cfg = ClassifierParadigmConfig(
+        annotators=[
+            {
+                "id": "feeding-v1",
+                "plugin": "audio_cnn_classifier",
+                "model_path": "/models/feeding.pt",
+            }
+        ]
+    )
+    assert len(cfg.annotators) == 1
+    assert cfg.annotators[0].id == "feeding-v1"
+
+
+def test_classifier_paradigm_with_multiple_annotators() -> None:
+    """ClassifierParadigmConfig with 3 annotators parses all correctly."""
+    from pet_annotation.config import ClassifierParadigmConfig
+
+    annotators = [
+        {"id": f"cls-{i}", "plugin": "audio_cnn_classifier", "model_path": f"/m{i}.pt"}
+        for i in range(3)
+    ]
+    cfg = ClassifierParadigmConfig(annotators=annotators)
+    assert len(cfg.annotators) == 3
+    assert [a.id for a in cfg.annotators] == ["cls-0", "cls-1", "cls-2"]
+
+
+def test_annotation_config_has_classifier_field_with_default(minimal_params: Path) -> None:
+    """AnnotationConfig parsed from minimal params has classifier field with default."""
+    from pet_annotation.config import ClassifierParadigmConfig
+
+    cfg = load_config(minimal_params)
+    assert hasattr(cfg, "classifier")
+    assert isinstance(cfg.classifier, ClassifierParadigmConfig)
+    assert cfg.classifier.annotators == []
+
+
+# ---------------------------------------------------------------------------
+# RuleAnnotatorConfig / RuleParadigmConfig tests (Phase 4 Subagent C)
+# ---------------------------------------------------------------------------
+
+
+def test_rule_paradigm_config_empty_annotators_default() -> None:
+    """RuleParadigmConfig default has empty annotators list (N=0 valid)."""
+    from pet_annotation.config import RuleParadigmConfig
+
+    cfg = RuleParadigmConfig()
+    assert cfg.annotators == []
+    assert cfg.batch_size == 50
+    assert cfg.max_concurrent == 8
+
+
+def test_rule_annotator_config_valid() -> None:
+    """RuleAnnotatorConfig validates all required and optional fields."""
+    from pet_annotation.config import RuleAnnotatorConfig
+
+    cfg = RuleAnnotatorConfig(
+        id="night-scene-rule",
+        plugin="brightness_rule",
+        rule_id="brightness_lt_0.3",
+    )
+    assert cfg.id == "night-scene-rule"
+    assert cfg.plugin == "brightness_rule"
+    assert cfg.rule_id == "brightness_lt_0.3"
+    assert cfg.extra_params == {}
+
+
+def test_rule_annotator_config_extra_params() -> None:
+    """RuleAnnotatorConfig stores plugin-specific extra_params."""
+    from pet_annotation.config import RuleAnnotatorConfig
+
+    cfg = RuleAnnotatorConfig(
+        id="bright-rule",
+        plugin="brightness_rule",
+        rule_id="brightness_lt_0.3",
+        extra_params={"threshold": 0.3},
+    )
+    assert cfg.extra_params["threshold"] == 0.3
+
+
+def test_rule_annotator_config_extra_forbid() -> None:
+    """RuleAnnotatorConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import RuleAnnotatorConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RuleAnnotatorConfig(
+            id="r",
+            plugin="p",
+            rule_id="rid",
+            unknown_field="oops",
+        )
+
+
+def test_rule_paradigm_config_extra_forbid() -> None:
+    """RuleParadigmConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import RuleParadigmConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RuleParadigmConfig(annotators=[], unknown_field="oops")
+
+
+def test_rule_paradigm_with_one_annotator() -> None:
+    """RuleParadigmConfig with 1 annotator parses correctly."""
+    from pet_annotation.config import RuleParadigmConfig
+
+    cfg = RuleParadigmConfig(
+        annotators=[
+            {
+                "id": "night-scene",
+                "plugin": "brightness_rule",
+                "rule_id": "brightness_lt_0.3",
+                "extra_params": {"threshold": 0.3},
+            }
+        ]
+    )
+    assert len(cfg.annotators) == 1
+    assert cfg.annotators[0].rule_id == "brightness_lt_0.3"
+
+
+def test_rule_paradigm_with_multiple_annotators() -> None:
+    """RuleParadigmConfig with 3 annotators parses all correctly."""
+    from pet_annotation.config import RuleParadigmConfig
+
+    annotators = [
+        {"id": f"rule-{i}", "plugin": "some_rule", "rule_id": f"rid-{i}"}
+        for i in range(3)
+    ]
+    cfg = RuleParadigmConfig(annotators=annotators)
+    assert len(cfg.annotators) == 3
+    assert [a.id for a in cfg.annotators] == ["rule-0", "rule-1", "rule-2"]
+
+
+def test_annotation_config_has_rule_field_with_default(minimal_params: Path) -> None:
+    """AnnotationConfig parsed from minimal params has rule field with default."""
+    from pet_annotation.config import RuleParadigmConfig
+
+    cfg = load_config(minimal_params)
+    assert hasattr(cfg, "rule")
+    assert isinstance(cfg.rule, RuleParadigmConfig)
+    assert cfg.rule.annotators == []

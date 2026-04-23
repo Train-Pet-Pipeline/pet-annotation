@@ -66,6 +66,29 @@ llm:
   batch_size: 10
   max_concurrent: 4
 
+classifier:
+  annotators: []  # default: no classifiers configured. Override per experiment.
+  # Example populated config:
+  # annotators:
+  #   - id: "feeding-activity-v1"
+  #     plugin: "audio_cnn_classifier"
+  #     model_path: "/models/feeding_cnn_v1.pt"
+  #     device: "cpu"
+  #     extra_params: {}
+  batch_size: 16
+  max_concurrent: 2
+
+rule:
+  annotators: []  # default: no rules configured. Override per experiment.
+  # Example populated config:
+  # annotators:
+  #   - id: "night-scene-rule"
+  #     plugin: "brightness_rule"
+  #     rule_id: "brightness_lt_0.3"
+  #     extra_params: {threshold: 0.3}
+  batch_size: 50
+  max_concurrent: 8
+
 quality:
   anomaly_threshold: 0.3
 
