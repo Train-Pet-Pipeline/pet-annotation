@@ -68,8 +68,8 @@ def test_cli_annotate_rule_dry_run(tmp_path):
     assert "dispatch=rule" in result.output.lower()
 
 
-def test_cli_annotate_human_prints_not_wired(tmp_path):
-    """annotate --annotator=human exits 0 and prints 'not yet wired' message."""
+def test_cli_annotate_human_dry_run(tmp_path):
+    """annotate --annotator=human --dry-run exits 0 and echoes dispatch=human info."""
     runner = CliRunner()
     db = tmp_path / "t.db"
     result = runner.invoke(
@@ -82,7 +82,8 @@ def test_cli_annotate_human_prints_not_wired(tmp_path):
             "vision",
             "--db",
             str(db),
+            "--dry-run",
         ],
     )
     assert result.exit_code == 0, result.output
-    assert "not yet wired" in result.output.lower()
+    assert "dispatch=human" in result.output.lower()

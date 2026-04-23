@@ -56,12 +56,6 @@ def annotate(batch_size, dry_run, params, db, annotator, modality, pet_data_db):
     if batch_size and config:
         config.annotation.batch_size = batch_size
 
-    if annotator == "human":
-        click.echo(
-            "Annotator paradigm 'human' not yet wired (Label Studio integration in Subagent D)"
-        )
-        return
-
     if dry_run:
         if annotator == "llm":
             llm_count = len(config.llm.annotators) if config else 0
@@ -80,6 +74,12 @@ def annotate(batch_size, dry_run, params, db, annotator, modality, pet_data_db):
             click.echo(
                 f"dispatch=rule modality={modality} dry_run=True "
                 f"configured_annotators={rule_count}"
+            )
+        elif annotator == "human":
+            human_count = len(config.human.annotators) if config else 0
+            click.echo(
+                f"dispatch=human modality={modality} dry_run=True "
+                f"configured_annotators={human_count}"
             )
         return
 
@@ -107,23 +107,52 @@ def annotate(batch_size, dry_run, params, db, annotator, modality, pet_data_db):
 @click.option("--output", "-o", type=click.Path(), default=None)
 @click.option("--params", default="params.yaml", type=click.Path(exists=True))
 @click.option(
+    "--db",
+    default=None,
+    type=click.Path(),
+    help="Path to SQLite database (overrides params.yaml)",
+)
+@click.option(
     "--annotator",
     type=click.Choice(["llm", "classifier", "rule", "human"]),
     required=True,
     help="Annotator paradigm to export from (required)",
 )
-def export_cmd(fmt, output, params, annotator):
-    """Export training data from the specified annotator paradigm table."""
+def export_cmd(fmt, output, params, db, annotator):
+    """Export training data from the specified annotator paradigm table.
+
+    Emits JSONL to --output file (or stdout if omitted).
+    """
+    import sys
     from pathlib import Path
 
+    from pet_annotation.export.sft_dpo import to_dpo_pairs, to_sft_samples
     from pet_annotation.store import AnnotationStore
 
     config = load_config(Path(params))
-    store = AnnotationStore(str(config.database.path))
+    db_path = db or str(config.database.path)
+    store = AnnotationStore(db_path)
     store.init_schema()
 
-    click.echo(f"export fmt={fmt} annotator={annotator}")
-    click.echo("Export pipeline not yet wired for 4-table schema — contributions welcome.")
+    output_path = Path(output) if output else None
+
+    if fmt == "sft":
+        samples = to_sft_samples(store, annotator_type=annotator, output_path=output_path)
+        count = len(samples)
+        if output_path is None:
+            for s in samples:
+                import json as _json
+                sys.stdout.write(_json.dumps(s, ensure_ascii=False) + "\n")
+    else:  # dpo
+        pairs = to_dpo_pairs(store, annotator_type=annotator, output_path=output_path)
+        count = len(pairs)
+        if output_path is None:
+            for p in pairs:
+                import json as _json
+                sys.stdout.write(_json.dumps(p, ensure_ascii=False) + "\n")
+
+    destination = str(output_path) if output_path else "stdout"
+    click.echo(f"exported {count} {fmt} samples to {destination}", err=True)
 
 
 @cli.command()
