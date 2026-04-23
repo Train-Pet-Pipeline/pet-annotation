@@ -297,16 +297,26 @@ async def test_e2e_full_pipeline(tmp_path: Path) -> None:
     # ------------------------------------------------------------------
     # Export SFT: llm annotator → 5 valid JSONL entries
     # ------------------------------------------------------------------
+    import warnings
+
+    from pet_schema import ShareGPTSFTSample
+
     from pet_annotation.export.sft_dpo import to_dpo_pairs, to_sft_samples
 
-    sft_samples = to_sft_samples(store, annotator_type="llm")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        sft_samples = to_sft_samples(store, annotator_type="llm")
     assert len(sft_samples) == 5
 
     for sample in sft_samples:
-        assert sample["annotator_type"] == "llm"
-        assert sample["input"].startswith("s3://pet-frames/")
-        # Output should be parseable JSON
-        output_data = json.loads(sample["output"])
+        # Phase 5 format: ShareGPT conversations (not old flat {annotator_type, input, output})
+        assert "conversations" in sample, "Must be ShareGPT format"
+        ShareGPTSFTSample.model_validate(sample)
+        # Lineage preserved
+        assert sample.get("annotator_id") is not None
+        gpt_turns = [c for c in sample["conversations"] if c["from"] == "gpt"]
+        assert len(gpt_turns) == 1
+        output_data = json.loads(gpt_turns[0]["value"])
         assert "scene" in output_data
 
     # ------------------------------------------------------------------
@@ -316,24 +326,25 @@ async def test_e2e_full_pipeline(tmp_path: Path) -> None:
     assert len(dpo_pairs) == 0, "Single LLM annotator → no DPO pairs expected"
 
     # ------------------------------------------------------------------
-    # Export SFT classifier → 5 valid entries
+    # Export SFT classifier → empty list + warning (not SFT-compatible)
     # ------------------------------------------------------------------
-    cls_samples = to_sft_samples(store, annotator_type="classifier")
-    assert len(cls_samples) == 5
-    for s in cls_samples:
-        assert s["annotator_type"] == "classifier"
-        output_data = json.loads(s["output"])
-        assert "predicted_class" in output_data
-        assert output_data["predicted_class"] == "unknown"  # NoopClassifier
+    with pytest.warns(UserWarning, match="classifier"):
+        cls_samples = to_sft_samples(store, annotator_type="classifier")
+    assert cls_samples == [], (
+        "classifier data is not SFT-compatible; goes through pet-train classifier plugin"
+    )
 
     # ------------------------------------------------------------------
-    # Export SFT human → 5 valid entries with decision='accept'
+    # Export SFT human → 5 valid ShareGPT entries with decision='accept'
     # ------------------------------------------------------------------
     human_samples = to_sft_samples(store, annotator_type="human")
     assert len(human_samples) == 5
     for s in human_samples:
-        assert s["annotator_type"] == "human"
-        output_data = json.loads(s["output"])
+        assert "conversations" in s
+        ShareGPTSFTSample.model_validate(s)
+        gpt_turns = [c for c in s["conversations"] if c["from"] == "gpt"]
+        assert len(gpt_turns) == 1
+        output_data = json.loads(gpt_turns[0]["value"])
         assert output_data["decision"] == "accept"
         assert output_data["reviewer"] == "reviewer@example.com"
 
