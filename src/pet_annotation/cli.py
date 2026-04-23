@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import click
 
 from pet_annotation.config import load_config, setup_logging
@@ -36,12 +38,14 @@ def cli():
     show_default=True,
     help="Modality of the samples being annotated",
 )
-def annotate(batch_size, dry_run, params, db, annotator, modality):
+@click.option(
+    "--pet-data-db",
+    default=None,
+    type=click.Path(),
+    help="Path to pet-data SQLite (overrides annotation.pet_data_db_path in params.yaml)",
+)
+def annotate(batch_size, dry_run, params, db, annotator, modality, pet_data_db):
     """Batch annotate pending samples using the specified annotator paradigm."""
-    if dry_run:
-        click.echo(f"dispatch={annotator} modality={modality} dry_run=True")
-        return
-
     from pathlib import Path
 
     from pet_annotation.store import AnnotationStore
@@ -52,11 +56,37 @@ def annotate(batch_size, dry_run, params, db, annotator, modality):
     if batch_size and config:
         config.annotation.batch_size = batch_size
 
+    if annotator != "llm":
+        click.echo(
+            f"Annotator paradigm '{annotator}' not yet wired "
+            f"(classifier/rule/human in Subagents C/D)"
+        )
+        return
+
+    if dry_run:
+        llm_count = len(config.llm.annotators) if config else 0
+        click.echo(
+            f"dispatch=llm modality={modality} dry_run=True "
+            f"configured_annotators={llm_count}"
+        )
+        return
+
+    # Actual LLM dispatch
+    from pet_annotation.teacher.orchestrator import AnnotationOrchestrator
+
     store = AnnotationStore(db_path)
     store.init_schema()
 
-    click.echo(f"dispatch={annotator} modality={modality}")
-    click.echo(f"Annotator paradigm '{annotator}' pipeline not yet wired — use dry-run for now.")
+    pet_data_db_path = (
+        pet_data_db
+        or (config.annotation.pet_data_db_path if config else "/data/pet-data/pet_data.db")
+    )
+
+    orch = AnnotationOrchestrator(config, store, pet_data_db_path)
+    stats = asyncio.run(orch.run())
+    click.echo(
+        f"processed={stats['processed']} skipped={stats['skipped']} failed={stats['failed']}"
+    )
 
 
 @cli.command(name="export")
