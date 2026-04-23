@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pet_infra.logging import setup_logging as _infra_setup_logging
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -56,6 +56,46 @@ class DatabaseConfig(BaseModel):
     busy_timeout_ms: int = 10000
 
 
+class LLMAnnotatorConfig(BaseModel):
+    """Configuration for a single LLM annotator in the Phase 4 paradigm orchestrator.
+
+    Attributes:
+        id: Annotator identifier stored as annotator_id in annotation_targets.
+        provider: Provider type; must match a registered provider class.
+        base_url: Base URL for the provider API.
+        model_name: Model identifier for the API.
+        temperature: Sampling temperature.
+        max_tokens: Maximum tokens to generate.
+        api_key: API key string; empty string means no auth header.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    provider: Literal["openai_compat", "vllm"]
+    base_url: str
+    model_name: str
+    temperature: float = 0.1
+    max_tokens: int = 2048
+    api_key: str = ""
+
+
+class LLMParadigmConfig(BaseModel):
+    """Configuration for the LLM annotator paradigm (Phase 4 orchestrator).
+
+    Attributes:
+        annotators: List of LLM annotator configs. N=0 is valid (no LLM annotation).
+        batch_size: Number of targets to claim per batch.
+        max_concurrent: Maximum number of concurrent provider requests.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    annotators: list[LLMAnnotatorConfig] = []
+    batch_size: int = 10
+    max_concurrent: int = 4
+
+
 class AnnotationParams(BaseModel):
     """Annotation pipeline tuning parameters."""
 
@@ -66,6 +106,8 @@ class AnnotationParams(BaseModel):
     low_confidence_threshold: float = 0.70
     primary_model: str
     schema_version: str = "1.0"
+    modality_default: str = "vision"
+    pet_data_db_path: str = "/data/pet-data/pet_data.db"
 
 
 class QualityParams(BaseModel):
@@ -88,6 +130,7 @@ class AnnotationConfig(BaseModel):
     models: dict[str, ModelConfig]
     quality: QualityParams = QualityParams()
     dpo: DpoParams
+    llm: LLMParadigmConfig = LLMParadigmConfig()
 
 
 # ---------------------------------------------------------------------------

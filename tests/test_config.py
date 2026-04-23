@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from pet_annotation.config import AccountConfig, AnnotationConfig, load_config, setup_logging
+from pet_annotation.config import (
+    AccountConfig,
+    AnnotationConfig,
+    LLMAnnotatorConfig,
+    LLMParadigmConfig,
+    load_config,
+    setup_logging,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -128,3 +135,97 @@ def test_params_has_modality_default() -> None:
     params_path = Path(__file__).parent.parent / "params.yaml"
     params = yaml.safe_load(params_path.read_text())
     assert params["annotation"]["modality_default"] == "vision"
+
+
+# ---------------------------------------------------------------------------
+# LLMAnnotatorConfig / LLMParadigmConfig tests (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+def test_llm_paradigm_config_empty_annotators_default() -> None:
+    """LLMParadigmConfig default has empty annotators list (N=0 valid)."""
+    cfg = LLMParadigmConfig()
+    assert cfg.annotators == []
+    assert cfg.batch_size == 10
+    assert cfg.max_concurrent == 4
+
+
+def test_llm_annotator_config_valid() -> None:
+    """LLMAnnotatorConfig validates all fields correctly."""
+    cfg = LLMAnnotatorConfig(
+        id="qwen25-vl-72b",
+        provider="vllm",
+        base_url="http://localhost:8000",
+        model_name="Qwen/Qwen2.5-VL-72B-Instruct",
+        temperature=0.1,
+        max_tokens=2048,
+        api_key="",
+    )
+    assert cfg.id == "qwen25-vl-72b"
+    assert cfg.provider == "vllm"
+    assert cfg.api_key == ""
+
+
+def test_llm_annotator_config_extra_forbid() -> None:
+    """LLMAnnotatorConfig must reject unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        LLMAnnotatorConfig(
+            id="a",
+            provider="vllm",
+            base_url="http://x",
+            model_name="m",
+            unknown_field="oops",
+        )
+
+
+def test_llm_paradigm_config_extra_forbid() -> None:
+    """LLMParadigmConfig must reject unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        LLMParadigmConfig(annotators=[], unknown_field="oops")
+
+
+def test_llm_paradigm_with_one_annotator() -> None:
+    """LLMParadigmConfig with 1 annotator parses correctly."""
+    cfg = LLMParadigmConfig(
+        annotators=[
+            {
+                "id": "local-qwen",
+                "provider": "vllm",
+                "base_url": "http://localhost:8000",
+                "model_name": "Qwen/Qwen2.5-VL-72B-Instruct",
+            }
+        ]
+    )
+    assert len(cfg.annotators) == 1
+    assert cfg.annotators[0].id == "local-qwen"
+
+
+def test_llm_paradigm_with_three_annotators() -> None:
+    """LLMParadigmConfig with 3 annotators parses correctly."""
+    annotators = [
+        {"id": f"ann-{i}", "provider": "vllm", "base_url": "http://x", "model_name": "m"}
+        for i in range(3)
+    ]
+    cfg = LLMParadigmConfig(annotators=annotators)
+    assert len(cfg.annotators) == 3
+    assert [a.id for a in cfg.annotators] == ["ann-0", "ann-1", "ann-2"]
+
+
+def test_annotation_config_has_llm_field_with_default(minimal_params: Path) -> None:
+    """AnnotationConfig parsed from minimal params has llm field with default."""
+    cfg = load_config(minimal_params)
+    assert hasattr(cfg, "llm")
+    assert isinstance(cfg.llm, LLMParadigmConfig)
+    assert cfg.llm.annotators == []
+
+
+def test_annotation_params_pet_data_db_path_default() -> None:
+    """AnnotationParams.pet_data_db_path has a default value."""
+    from pet_annotation.config import AnnotationParams
+
+    params = AnnotationParams(primary_model="x")
+    assert params.pet_data_db_path == "/data/pet-data/pet_data.db"
