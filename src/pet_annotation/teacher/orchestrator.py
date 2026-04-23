@@ -1,6 +1,6 @@
-"""Annotation orchestrator — async batch dispatch for 1..N LLM annotators.
+"""Annotation orchestrator — async batch dispatch for 1..N annotators (LLM/classifier/rule).
 
-Phase 4 wire: implements LLM paradigm. Classifier/rule/human in later subagents.
+Phase 4 wire: LLM (Subagent B) + Classifier + Rule (Subagent C). Human in Subagent D.
 
 Design decisions (user-approved 2026-04-23):
 - D1: pending targets read from pet-data frames table (read-only via sqlite3.connect)
@@ -16,15 +16,23 @@ import hashlib
 import json
 import logging
 import signal
+import sqlite3
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from pet_schema import LLMAnnotation
+from pet_schema import ClassifierAnnotation, LLMAnnotation, RuleAnnotation
 from pet_schema.renderer import render_prompt
 from pet_schema.validator import validate_output
 
-from pet_annotation.config import AnnotationConfig, LLMAnnotatorConfig
+from pet_annotation.classifiers.base import BaseClassifierAnnotator
+from pet_annotation.config import (
+    AnnotationConfig,
+    ClassifierAnnotatorConfig,
+    LLMAnnotatorConfig,
+    RuleAnnotatorConfig,
+)
+from pet_annotation.rules.base import BaseRuleAnnotator
 from pet_annotation.store import AnnotationStore
 from pet_annotation.teacher.providers.openai_compat import OpenAICompatProvider
 from pet_annotation.teacher.providers.vllm import VLLMProvider
@@ -106,6 +114,11 @@ class AnnotationOrchestrator:
             llm_cfg.id: _build_provider(llm_cfg)
             for llm_cfg in config.llm.annotators
         }
+        # Classifier/rule plugin dicts initialised empty; tests may inject via attribute.
+        # Production callers should populate via _build_classifier_plugins() /
+        # _build_rule_plugins() after construction (or override in subclass).
+        self._classifier_plugins: dict[str, BaseClassifierAnnotator] = {}
+        self._rule_plugins: dict[str, BaseRuleAnnotator] = {}
         self._semaphore = asyncio.Semaphore(config.llm.max_concurrent)
         # Lock serializes sqlite3 writes across asyncio tasks sharing one connection.
         # Python's sqlite3.Connection is not safe for interleaved execute/commit from
@@ -115,26 +128,62 @@ class AnnotationOrchestrator:
         self._shutdown = False
 
     async def run(self) -> dict[str, int]:
-        """Main dispatch loop for LLM paradigm.
+        """Main dispatch loop for all configured paradigms (LLM, classifier, rule).
+
+        Dispatches each paradigm in sequence: LLM → classifier → rule.
+        Each paradigm returns its own stats; totals are accumulated.
 
         Returns:
             Stats dict: {"processed": N, "skipped": M, "failed": K}
         """
-        if not self._config.llm.annotators:
-            logger.info('{"event": "no_llm_annotators_configured"}')
-            return {"processed": 0, "skipped": 0, "failed": 0}
-
         self._setup_signal_handlers()
 
-        # Step 1: ingest new pending targets from pet-data
+        stats: dict[str, int] = {"processed": 0, "skipped": 0, "failed": 0}
+
+        if not (
+            self._config.llm.annotators
+            or self._config.classifier.annotators
+            or self._config.rule.annotators
+        ):
+            logger.info('{"event": "no_annotators_configured"}')
+            return stats
+
+        # LLM paradigm
+        if self._config.llm.annotators:
+            llm_stats = await self._run_llm_paradigm()
+            for k in stats:
+                stats[k] += llm_stats[k]
+
+        # Classifier paradigm
+        if self._config.classifier.annotators and not self._shutdown:
+            cls_stats = await self._run_classifier_paradigm()
+            for k in stats:
+                stats[k] += cls_stats[k]
+
+        # Rule paradigm
+        if self._config.rule.annotators and not self._shutdown:
+            rule_stats = await self._run_rule_paradigm()
+            for k in stats:
+                stats[k] += rule_stats[k]
+
+        logger.info(f'{{"event": "orchestrator_done", "stats": {json.dumps(stats)}}}')
+        return stats
+
+    async def _run_llm_paradigm(self) -> dict[str, int]:
+        """Dispatch all configured LLM annotators.
+
+        Returns:
+            Stats dict: {"processed": N, "skipped": M, "failed": K}
+        """
+        # Ingest new pending targets from pet-data
         annotator_ids = [a.id for a in self._config.llm.annotators]
         new_count = self._store.ingest_pending_from_petdata(
             self._pet_data_db,
             annotator_ids,
             annotator_type="llm",
-            modality=None,  # all modalities for MVP
+            modality=None,
         )
-        logger.info(f'{{"event": "ingested_pending", "count": {new_count}}}')
+        logger.info(f'{{"event": "llm_ingested_pending", "count": {new_count}}}')
 
         # Render prompt once (shared by all annotators per run)
         system_prompt, user_prompt = render_prompt(
@@ -146,7 +195,6 @@ class AnnotationOrchestrator:
 
         stats: dict[str, int] = {"processed": 0, "skipped": 0, "failed": 0}
 
-        # Step 2: batch loop per annotator (D4: each annotator independent)
         for llm_cfg in self._config.llm.annotators:
             if self._shutdown:
                 break
@@ -174,7 +222,122 @@ class AnnotationOrchestrator:
                     else:
                         stats["skipped"] += 1
 
-        logger.info(f'{{"event": "orchestrator_done", "stats": {json.dumps(stats)}}}')
+        return stats
+
+    async def _run_classifier_paradigm(self) -> dict[str, int]:
+        """Dispatch all configured classifier annotators.
+
+        Uses asyncio.to_thread() for synchronous plugin inference to keep
+        dispatch uniformly async (consistent with LLM paradigm framework).
+
+        Returns:
+            Stats dict: {"processed": N, "skipped": M, "failed": K}
+        """
+        annotator_ids = [a.id for a in self._config.classifier.annotators]
+        new_count = self._store.ingest_pending_from_petdata(
+            self._pet_data_db,
+            annotator_ids,
+            annotator_type="classifier",
+            modality=None,
+        )
+        logger.info(f'{{"event": "classifier_ingested_pending", "count": {new_count}}}')
+
+        semaphore = asyncio.Semaphore(self._config.classifier.max_concurrent)
+        stats: dict[str, int] = {"processed": 0, "skipped": 0, "failed": 0}
+
+        for cls_cfg in self._config.classifier.annotators:
+            if self._shutdown:
+                break
+            plugin = self._classifier_plugins.get(cls_cfg.id)
+            if plugin is None:
+                logger.warning(
+                    f'{{"event": "classifier_plugin_missing", "annotator_id": "{cls_cfg.id}"}}'
+                )
+                continue
+
+            while not self._shutdown:
+                target_ids = self._store.claim_pending_targets(
+                    cls_cfg.id, self._config.classifier.batch_size
+                )
+                if not target_ids:
+                    break
+
+                tasks = [
+                    self._process_one_classifier(tid, cls_cfg, plugin, semaphore)
+                    for tid in target_ids
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for tid, res in zip(target_ids, results):
+                    if isinstance(res, Exception):
+                        stats["failed"] += 1
+                        self._store.mark_target_failed(tid, cls_cfg.id, str(res))
+                        logger.error(
+                            f'{{"event": "classifier_target_failed", "target_id": "{tid}", '
+                            f'"annotator_id": "{cls_cfg.id}", "error": "{res}"}}'
+                        )
+                    elif res == "done":
+                        stats["processed"] += 1
+                    else:
+                        stats["skipped"] += 1
+
+        return stats
+
+    async def _run_rule_paradigm(self) -> dict[str, int]:
+        """Dispatch all configured rule annotators.
+
+        Fetches metadata from petdata frames table (read-only) for each target, then
+        applies rule via asyncio.to_thread() for uniform async dispatch.
+
+        Returns:
+            Stats dict: {"processed": N, "skipped": M, "failed": K}
+        """
+        annotator_ids = [a.id for a in self._config.rule.annotators]
+        new_count = self._store.ingest_pending_from_petdata(
+            self._pet_data_db,
+            annotator_ids,
+            annotator_type="rule",
+            modality=None,
+        )
+        logger.info(f'{{"event": "rule_ingested_pending", "count": {new_count}}}')
+
+        semaphore = asyncio.Semaphore(self._config.rule.max_concurrent)
+        stats: dict[str, int] = {"processed": 0, "skipped": 0, "failed": 0}
+
+        for rule_cfg in self._config.rule.annotators:
+            if self._shutdown:
+                break
+            plugin = self._rule_plugins.get(rule_cfg.id)
+            if plugin is None:
+                logger.warning(
+                    f'{{"event": "rule_plugin_missing", "annotator_id": "{rule_cfg.id}"}}'
+                )
+                continue
+
+            while not self._shutdown:
+                target_ids = self._store.claim_pending_targets(
+                    rule_cfg.id, self._config.rule.batch_size
+                )
+                if not target_ids:
+                    break
+
+                tasks = [
+                    self._process_one_rule(tid, rule_cfg, plugin, semaphore)
+                    for tid in target_ids
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for tid, res in zip(target_ids, results):
+                    if isinstance(res, Exception):
+                        stats["failed"] += 1
+                        self._store.mark_target_failed(tid, rule_cfg.id, str(res))
+                        logger.error(
+                            f'{{"event": "rule_target_failed", "target_id": "{tid}", '
+                            f'"annotator_id": "{rule_cfg.id}", "error": "{res}"}}'
+                        )
+                    elif res == "done":
+                        stats["processed"] += 1
+                    else:
+                        stats["skipped"] += 1
+
         return stats
 
     async def _process_one(
@@ -249,6 +412,145 @@ class AnnotationOrchestrator:
                 f'"tokens": {prompt_tokens + completion_tokens}}}'
             )
             return "done"
+
+    async def _process_one_classifier(
+        self,
+        target_id: str,
+        cls_cfg: ClassifierAnnotatorConfig,
+        plugin: BaseClassifierAnnotator,
+        semaphore: asyncio.Semaphore,
+    ) -> str:
+        """Annotate one target × one classifier annotator.
+
+        Runs synchronous plugin.annotate() via asyncio.to_thread() for uniform
+        async framework. Serializes store writes with write_lock.
+
+        Args:
+            target_id: The target (frame) identifier. Used as target_data path.
+            cls_cfg: The classifier annotator configuration.
+            plugin: Loaded classifier plugin instance.
+            semaphore: Concurrency limiter.
+
+        Returns:
+            'done' on success.
+
+        Raises:
+            Exception: On inference error or store write failure.
+        """
+        async with semaphore:
+            predicted_class, class_probs, logits = await asyncio.to_thread(
+                plugin.annotate,
+                target_id,
+                **cls_cfg.extra_params,
+            )
+
+            annotation_id = f"{target_id}:{cls_cfg.id}:{uuid.uuid4().hex[:8]}"
+            ann = ClassifierAnnotation(
+                annotation_id=annotation_id,
+                target_id=target_id,
+                annotator_id=cls_cfg.id,
+                annotator_type="classifier",
+                modality=self._config.annotation.modality_default,
+                schema_version=self._config.annotation.schema_version,
+                created_at=datetime.now(UTC),
+                storage_uri=None,
+                predicted_class=predicted_class,
+                class_probs=class_probs,
+                logits=logits,
+            )
+            async with self._write_lock:
+                self._store.insert_classifier(ann)
+                self._store.mark_target_done(target_id, cls_cfg.id)
+
+            logger.info(
+                f'{{"event": "classifier_annotated", "target_id": "{target_id}", '
+                f'"annotator_id": "{cls_cfg.id}", "predicted_class": "{predicted_class}"}}'
+            )
+            return "done"
+
+    async def _process_one_rule(
+        self,
+        target_id: str,
+        rule_cfg: RuleAnnotatorConfig,
+        plugin: BaseRuleAnnotator,
+        semaphore: asyncio.Semaphore,
+    ) -> str:
+        """Annotate one target × one rule annotator.
+
+        Fetches frame metadata from petdata (read-only), then runs synchronous
+        plugin.apply() via asyncio.to_thread(). Serializes store writes with write_lock.
+
+        Args:
+            target_id: The target (frame) identifier.
+            rule_cfg: The rule annotator configuration.
+            plugin: Loaded rule plugin instance.
+            semaphore: Concurrency limiter.
+
+        Returns:
+            'done' on success.
+
+        Raises:
+            Exception: On metadata fetch error or store write failure.
+        """
+        async with semaphore:
+            target_metadata = await asyncio.to_thread(
+                self._fetch_frame_metadata, target_id
+            )
+            rule_output = await asyncio.to_thread(
+                plugin.apply,
+                target_metadata,
+                **rule_cfg.extra_params,
+            )
+
+            annotation_id = f"{target_id}:{rule_cfg.id}:{uuid.uuid4().hex[:8]}"
+            ann = RuleAnnotation(
+                annotation_id=annotation_id,
+                target_id=target_id,
+                annotator_id=rule_cfg.id,
+                annotator_type="rule",
+                modality=self._config.annotation.modality_default,
+                schema_version=self._config.annotation.schema_version,
+                created_at=datetime.now(UTC),
+                storage_uri=None,
+                rule_id=rule_cfg.rule_id,
+                rule_output=rule_output,
+            )
+            async with self._write_lock:
+                self._store.insert_rule(ann)
+                self._store.mark_target_done(target_id, rule_cfg.id)
+
+            logger.info(
+                f'{{"event": "rule_annotated", "target_id": "{target_id}", '
+                f'"annotator_id": "{rule_cfg.id}", "rule_id": "{rule_cfg.rule_id}", '
+                f'"rule_output_empty": {str(not rule_output).lower()}}}'
+            )
+            return "done"
+
+    def _fetch_frame_metadata(self, frame_id: str) -> dict[str, Any]:
+        """Fetch all columns for a frame from pet-data (read-only).
+
+        Opens a short-lived read-only connection to petdata SQLite, returns
+        all columns as a dict for rule plugin consumption.
+
+        Args:
+            frame_id: The frame identifier to look up.
+
+        Returns:
+            Dict of column_name → value from the frames table row.
+            Returns empty dict if frame_id is not found.
+        """
+        conn = sqlite3.connect(
+            f"file:{self._pet_data_db}?mode=ro", uri=True, timeout=10
+        )
+        try:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                "SELECT * FROM frames WHERE frame_id = ?", (frame_id,)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else {}
+        finally:
+            conn.close()
 
     async def _call_provider(
         self,
