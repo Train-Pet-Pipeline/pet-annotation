@@ -56,22 +56,34 @@ def annotate(batch_size, dry_run, params, db, annotator, modality, pet_data_db):
     if batch_size and config:
         config.annotation.batch_size = batch_size
 
-    if annotator != "llm":
+    if annotator == "human":
         click.echo(
-            f"Annotator paradigm '{annotator}' not yet wired "
-            f"(classifier/rule/human in Subagents C/D)"
+            "Annotator paradigm 'human' not yet wired (Label Studio integration in Subagent D)"
         )
         return
 
     if dry_run:
-        llm_count = len(config.llm.annotators) if config else 0
-        click.echo(
-            f"dispatch=llm modality={modality} dry_run=True "
-            f"configured_annotators={llm_count}"
-        )
+        if annotator == "llm":
+            llm_count = len(config.llm.annotators) if config else 0
+            click.echo(
+                f"dispatch=llm modality={modality} dry_run=True "
+                f"configured_annotators={llm_count}"
+            )
+        elif annotator == "classifier":
+            cls_count = len(config.classifier.annotators) if config else 0
+            click.echo(
+                f"dispatch=classifier modality={modality} dry_run=True "
+                f"configured_annotators={cls_count}"
+            )
+        elif annotator == "rule":
+            rule_count = len(config.rule.annotators) if config else 0
+            click.echo(
+                f"dispatch=rule modality={modality} dry_run=True "
+                f"configured_annotators={rule_count}"
+            )
         return
 
-    # Actual LLM dispatch
+    # Actual dispatch via AnnotationOrchestrator (llm / classifier / rule)
     from pet_annotation.teacher.orchestrator import AnnotationOrchestrator
 
     store = AnnotationStore(db_path)
