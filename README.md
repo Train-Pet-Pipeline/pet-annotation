@@ -51,6 +51,23 @@ pet-schema → pet-annotation (4 annotator-paradigm tables)
                 └── human_annotations
 ```
 
+### Phase 4: Pending-target infrastructure
+
+The Phase 4 orchestrator introduces a `annotation_targets` table that tracks
+per-(target, annotator) annotation state: `pending → in_progress → (done | failed)`.
+
+**Cross-repo read pattern (D1):** pet-annotation reads pet-data's `frames` table
+read-only via `sqlite3.connect(pet_data_db_path, timeout=10)` — no code import
+from pet-data, no write access. This is the same pattern used by pet-data's own
+`datasets/vision_frames.py` for read-only cross-component queries. The path is
+configured via `annotation.pet_data_db_path` in `params.yaml`.
+
+**Design decisions (locked 2026-04-23):**
+- D1: pending targets read from pet-data frames table (read-only sqlite3.connect)
+- D2: state tracked in pet-annotation's own `annotation_targets` table (migration 005)
+- D3: `annotation.llm.annotators: []` — N=0 is valid (no LLM annotation this run)
+- D4: no cross-model reconcile — each annotator writes independently
+
 ## License
 
 This project is licensed under the [Business Source License 1.1](LICENSE) (BSL 1.1).
