@@ -6,7 +6,6 @@ import pytest
 
 from pet_annotation.rules.base import BaseRuleAnnotator, BrightnessRule
 
-
 # ---------------------------------------------------------------------------
 # BrightnessRule tests
 # ---------------------------------------------------------------------------

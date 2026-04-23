@@ -6,7 +6,6 @@ import pytest
 
 from pet_annotation.classifiers.base import BaseClassifierAnnotator, NoopClassifier
 
-
 # ---------------------------------------------------------------------------
 # NoopClassifier tests
 # ---------------------------------------------------------------------------
