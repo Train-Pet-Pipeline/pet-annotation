@@ -1,19 +1,36 @@
 """Tests for SFT/DPO export — to_sft_samples() / to_dpo_pairs() + CLI export command.
 
+Phase 5 rewrite: exporter now emits LLaMA-Factory-ready formats.
+  - to_sft_samples(llm)    → ShareGPTSFTSample conversations format
+  - to_sft_samples(human)  → ShareGPTSFTSample conversations format
+  - to_sft_samples(classifier|rule) → empty list + UserWarning
+  - to_dpo_pairs(llm)      → DPOSample {sample_id, chosen, rejected, ...} + prompt
+  - to_dpo_pairs(non-llm)  → empty list + UserWarning
+  - Producer-side validator: each sample passes model_validate() before write
+
 TDD:
-  - 3 done LLM annotations → export sft → 3 valid JSONL entries
-  - Export to file → file contains 3 lines
-  - 2 annotators × 1 target → DPO pair formed (chosen/rejected)
-  - Single annotator per target → DPO pairs skipped for llm
-  - CLI export sft → echoes correct count
+  1. 3 done LLM annotations → to_sft_samples returns 3 ShareGPTSFTSample dicts
+  2. Each sample has conversations list with human + gpt turns; gpt turn = raw_response
+  3. Each sample passes ShareGPTSFTSample.model_validate() (producer validator)
+  4. Export to file → file contains 3 lines, each valid JSON with "conversations" key
+  5. 2 annotators × 1 target → 1 DPO pair with prompt/chosen/rejected
+  6. DPO pair passes DPOSample.model_validate() (producer validator)
+  7. Single annotator per target → DPO pairs skipped for llm
+  8. classifier type → empty list + UserWarning
+  9. Malformed exporter output → validator raises (regression)
+  10. CLI export sft → echoes correct count
+  11. CLI export dpo → 1 pair, JSONL has prompt/chosen/rejected
+  12. Human paradigm → ShareGPTSFTSample with gpt turn = serialised decision JSON
 """
 
 from __future__ import annotations
 
 import json
+import warnings
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 import yaml
 from click.testing import CliRunner
 
@@ -57,7 +74,6 @@ def _seed_llm_annotations(
             parsed_output=json.loads(raw),
         )
         store.insert_llm(ann)
-        # Insert into annotation_targets as done
         store._conn.execute(
             "INSERT INTO annotation_targets "
             "(target_id, annotator_id, annotator_type, state, claimed_at, finished_at) "
@@ -97,6 +113,40 @@ def _seed_classifier_annotations(
     store._conn.commit()
 
 
+def _seed_human_annotations(
+    store: AnnotationStore,
+    target_ids: list[str],
+    annotator_id: str = "human-1",
+    decision: str = "accept",
+    reviewer: str = "reviewer@example.com",
+) -> None:
+    """Insert done human_annotations + annotation_targets rows."""
+    from pet_schema import HumanAnnotation
+
+    for tid in target_ids:
+        ann = HumanAnnotation(
+            annotation_id=f"{tid}:{annotator_id}:hh",
+            target_id=tid,
+            annotator_id=annotator_id,
+            annotator_type="human",
+            modality="vision",
+            schema_version="1.0",
+            created_at=datetime(2026, 4, 23),
+            storage_uri=None,
+            reviewer=reviewer,
+            decision=decision,
+            notes="looks good",
+        )
+        store.insert_human(ann)
+        store._conn.execute(
+            "INSERT INTO annotation_targets "
+            "(target_id, annotator_id, annotator_type, state, claimed_at, finished_at) "
+            "VALUES (?, ?, 'human', 'done', '2026-04-23', '2026-04-23')",
+            (tid, annotator_id),
+        )
+    store._conn.commit()
+
+
 def _make_minimal_params(tmp_path: Path) -> Path:
     """Write a minimal params.yaml so CLI can load config."""
     params = {
@@ -121,71 +171,93 @@ def _make_minimal_params(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Test 1: 3 done LLM annotations → to_sft_samples returns 3 valid entries
+# Test 1 + 2 + 3: LLM → ShareGPT conversations shape + producer validator
 # ---------------------------------------------------------------------------
 
 
-def test_to_sft_samples_llm_three_annotations(tmp_path: Path) -> None:
-    """3 done LLM annotations → to_sft_samples returns 3 samples with expected schema."""
+def test_to_sft_samples_llm_sharegpt_format(tmp_path: Path) -> None:
+    """3 done LLM annotations → 3 ShareGPTSFTSample dicts with conversations list."""
+    from pet_schema import ShareGPTSFTSample
+
     from pet_annotation.export.sft_dpo import to_sft_samples
 
     store = _init_store(tmp_path)
     _seed_llm_annotations(store, ["f1", "f2", "f3"])
 
-    samples = to_sft_samples(store, annotator_type="llm")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        samples = to_sft_samples(store, annotator_type="llm")
 
     assert len(samples) == 3
+
     for s in samples:
-        assert "sample_id" in s
-        assert "annotator_id" in s
-        assert s["annotator_type"] == "llm"
-        assert "input" in s
-        assert "output" in s
-        # input should be storage_uri (seeded as s3://bucket/<id>.jpg)
-        assert s["input"].startswith("s3://bucket/")
-        # output should be valid JSON
-        json.loads(s["output"])
+        # Must have conversations list, not old flat keys
+        assert "conversations" in s, "Must have conversations key (ShareGPT format)"
+        assert "input" not in s, "Old flat 'input' key must not be present"
+        assert "output" not in s, "Old flat 'output' key must not be present"
+
+        convs = s["conversations"]
+        assert len(convs) >= 2
+        # Last turn must be gpt turn with annotation content
+        gpt_turns = [c for c in convs if c["from"] == "gpt"]
+        assert len(gpt_turns) == 1
+        gpt_value = gpt_turns[0]["value"]
+        # gpt turn should contain the raw LLM response (valid JSON with scene)
+        parsed = json.loads(gpt_value)
+        assert "scene" in parsed
+
+        # Lineage fields present
+        assert s.get("sample_id") is not None
+        assert s.get("annotator_id") == "llm-1"
+
+        # Producer-side validator: must not raise
+        ShareGPTSFTSample.model_validate(s)
 
 
 # ---------------------------------------------------------------------------
-# Test 2: Export to file → file exists and has 3 JSONL lines
+# Test 4: Export to file → 3 lines, each has conversations key
 # ---------------------------------------------------------------------------
 
 
 def test_to_sft_samples_writes_jsonl_file(tmp_path: Path) -> None:
-    """to_sft_samples with output_path writes 3-line JSONL file."""
+    """to_sft_samples with output_path writes 3-line JSONL file in ShareGPT format."""
     from pet_annotation.export.sft_dpo import to_sft_samples
 
     store = _init_store(tmp_path)
     _seed_llm_annotations(store, ["f1", "f2", "f3"])
 
     out = tmp_path / "output" / "sft.jsonl"
-    to_sft_samples(store, annotator_type="llm", output_path=out)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        to_sft_samples(store, annotator_type="llm", output_path=out)
 
     assert out.exists()
     lines = out.read_text().strip().split("\n")
     assert len(lines) == 3
     for line in lines:
         data = json.loads(line)
-        assert data["annotator_type"] == "llm"
+        assert "conversations" in data
+        assert data.get("annotator_id") is not None
 
 
 # ---------------------------------------------------------------------------
-# Test 3: 2 annotators × 1 target → DPO pair formed
+# Test 5 + 6: DPO pair → prompt/chosen/rejected + producer validator
 # ---------------------------------------------------------------------------
 
 
 def test_to_dpo_pairs_two_annotators_one_target(tmp_path: Path) -> None:
-    """2 LLM annotators for same target → 1 DPO pair with chosen/rejected."""
+    """2 LLM annotators for same target → 1 DPO pair with prompt/chosen/rejected."""
+    from pet_schema import DPOSample
+
     from pet_annotation.export.sft_dpo import to_dpo_pairs
 
     store = _init_store(tmp_path)
-    # High-confidence annotation from ann-1
     _seed_llm_annotations(store, ["f1"], annotator_id="ann-1", confidence=0.95)
-    # Low-confidence annotation from ann-2
     _seed_llm_annotations(store, ["f1"], annotator_id="ann-2", confidence=0.3)
 
-    pairs = to_dpo_pairs(store, annotator_type="llm")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        pairs = to_dpo_pairs(store, annotator_type="llm")
 
     assert len(pairs) == 1
     pair = pairs[0]
@@ -193,10 +265,16 @@ def test_to_dpo_pairs_two_annotators_one_target(tmp_path: Path) -> None:
     assert pair["chosen_annotator_id"] == "ann-1"  # higher confidence
     assert pair["rejected_annotator_id"] == "ann-2"
     assert pair["chosen"] != "" and pair["rejected"] != ""
+    # prompt field must be present (LLaMA-Factory Alpaca DPO requirement)
+    assert "prompt" in pair
+    assert pair["prompt"] != ""
+
+    # Producer-side validator: full DPOSample including prompt (pet-schema v3.2.1+)
+    DPOSample.model_validate(pair)
 
 
 # ---------------------------------------------------------------------------
-# Test 4: Single annotator per target → DPO pairs skipped for llm
+# Test 7: Single annotator per target → DPO pairs skipped
 # ---------------------------------------------------------------------------
 
 
@@ -207,36 +285,82 @@ def test_to_dpo_pairs_single_annotator_skipped(tmp_path: Path) -> None:
     store = _init_store(tmp_path)
     _seed_llm_annotations(store, ["f1", "f2", "f3"])
 
-    pairs = to_dpo_pairs(store, annotator_type="llm")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        pairs = to_dpo_pairs(store, annotator_type="llm")
 
-    # Each target has only 1 annotation → no pairs possible
     assert len(pairs) == 0
 
 
 # ---------------------------------------------------------------------------
-# Test 5: Classifier export SFT → 3 valid entries with annotator_type='classifier'
+# Test 8: Classifier type → empty list + UserWarning
 # ---------------------------------------------------------------------------
 
 
-def test_to_sft_samples_classifier_three_annotations(tmp_path: Path) -> None:
-    """3 done classifier annotations → to_sft_samples returns 3 samples."""
+def test_to_sft_samples_classifier_returns_empty_with_warning(tmp_path: Path) -> None:
+    """classifier annotator_type → empty list + UserWarning (not natural SFT shape)."""
     from pet_annotation.export.sft_dpo import to_sft_samples
 
     store = _init_store(tmp_path)
     _seed_classifier_annotations(store, ["f1", "f2", "f3"])
 
-    samples = to_sft_samples(store, annotator_type="classifier")
+    with pytest.warns(UserWarning, match="classifier"):
+        samples = to_sft_samples(store, annotator_type="classifier")
 
-    assert len(samples) == 3
-    for s in samples:
-        assert s["annotator_type"] == "classifier"
-        output = json.loads(s["output"])
-        assert "predicted_class" in output
-        assert "class_probs" in output
+    assert samples == []
+
+
+def test_to_sft_samples_rule_returns_empty_with_warning(tmp_path: Path) -> None:
+    """rule annotator_type → empty list + UserWarning."""
+    from pet_annotation.export.sft_dpo import to_sft_samples
+
+    store = _init_store(tmp_path)
+
+    with pytest.warns(UserWarning, match="rule"):
+        samples = to_sft_samples(store, annotator_type="rule")
+
+    assert samples == []
+
+
+def test_to_dpo_pairs_non_llm_returns_empty_with_warning(tmp_path: Path) -> None:
+    """non-llm DPO → empty list + UserWarning."""
+    from pet_annotation.export.sft_dpo import to_dpo_pairs
+
+    store = _init_store(tmp_path)
+
+    with pytest.warns(UserWarning, match="DPO pair"):
+        pairs = to_dpo_pairs(store, annotator_type="classifier")
+
+    assert pairs == []
 
 
 # ---------------------------------------------------------------------------
-# Test 6: CLI export sft → exit 0, stderr shows "exported 3 sft samples"
+# Test 9: Malformed sample → validator raises (regression)
+# ---------------------------------------------------------------------------
+
+
+def test_producer_validator_raises_on_malformed_sample() -> None:
+    """ShareGPTSFTSample.model_validate raises ValidationError on malformed dict."""
+    from pet_schema import ShareGPTSFTSample
+    from pydantic import ValidationError
+
+    bad_dict = {"conversations": [{"from": "unknown_role", "value": "x"}]}
+    with pytest.raises(ValidationError):
+        ShareGPTSFTSample.model_validate(bad_dict)
+
+
+def test_producer_validator_raises_on_malformed_dpo_pair() -> None:
+    """DPOSample.model_validate raises ValidationError when required fields missing."""
+    from pet_schema import DPOSample
+    from pydantic import ValidationError
+
+    bad_dict = {"chosen": "a"}  # missing required fields
+    with pytest.raises(ValidationError):
+        DPOSample.model_validate(bad_dict)
+
+
+# ---------------------------------------------------------------------------
+# Test 10: CLI export sft → exit 0, output shows count
 # ---------------------------------------------------------------------------
 
 
@@ -259,12 +383,11 @@ def test_cli_export_sft_command(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    # Should echo export count message
     assert "exported 3 sft" in result.output
 
 
 # ---------------------------------------------------------------------------
-# Test 7: CLI export dpo → exit 0
+# Test 11: CLI export dpo → 1 pair, JSONL has prompt
 # ---------------------------------------------------------------------------
 
 
@@ -295,3 +418,32 @@ def test_cli_export_dpo_command(tmp_path: Path) -> None:
     assert len(lines) == 1
     pair = json.loads(lines[0])
     assert "chosen" in pair and "rejected" in pair
+    assert "prompt" in pair
+
+
+# ---------------------------------------------------------------------------
+# Test 12: Human paradigm → ShareGPTSFTSample with gpt turn = serialised decision
+# ---------------------------------------------------------------------------
+
+
+def test_to_sft_samples_human_sharegpt_format(tmp_path: Path) -> None:
+    """Human annotations → ShareGPTSFTSample with gpt turn containing decision JSON."""
+    from pet_schema import ShareGPTSFTSample
+
+    from pet_annotation.export.sft_dpo import to_sft_samples
+
+    store = _init_store(tmp_path)
+    _seed_human_annotations(store, ["h1", "h2"], decision="accept", reviewer="rev@x.com")
+
+    samples = to_sft_samples(store, annotator_type="human")
+
+    assert len(samples) == 2
+    for s in samples:
+        assert "conversations" in s
+        ShareGPTSFTSample.model_validate(s)
+
+        gpt_turns = [c for c in s["conversations"] if c["from"] == "gpt"]
+        assert len(gpt_turns) == 1
+        decision_data = json.loads(gpt_turns[0]["value"])
+        assert decision_data["decision"] == "accept"
+        assert decision_data["reviewer"] == "rev@x.com"
