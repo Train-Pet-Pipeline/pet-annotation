@@ -269,9 +269,8 @@ def test_to_dpo_pairs_two_annotators_one_target(tmp_path: Path) -> None:
     assert "prompt" in pair
     assert pair["prompt"] != ""
 
-    # Producer-side validator: validate DPOSample fields (sans prompt which is injected)
-    pair_no_prompt = {k: v for k, v in pair.items() if k != "prompt"}
-    DPOSample.model_validate(pair_no_prompt)
+    # Producer-side validator: full DPOSample including prompt (pet-schema v3.2.1+)
+    DPOSample.model_validate(pair)
 
 
 # ---------------------------------------------------------------------------

@@ -367,7 +367,10 @@ def to_dpo_pairs(
         system_prompt, user_prompt = _get_prompt(chosen["schema_version"])
         prompt_text = f"{system_prompt}\n\n{user_prompt}"
 
+        # pet-schema v3.2.1 added prompt field to DPOSample — complete Alpaca DPO
+        # contract: producer builds + validates in one step, no dict injection.
         pair = DPOSample(
+            prompt=prompt_text,
             sample_id=target_id,
             chosen=chosen["raw_response"],
             rejected=rejected["raw_response"],
@@ -375,13 +378,9 @@ def to_dpo_pairs(
             rejected_annotator_id=rejected["annotator_id"],
             storage_uri=chosen["storage_uri"],
         )
+        # Round-trip validation as fail-fast on any future shape drift.
         DPOSample.model_validate(pair.model_dump())
-        pair_dict = pair.model_dump()
-        # Inject prompt for LLaMA-Factory Alpaca DPO consumption.
-        # DPOSample does not currently carry a prompt field (pet-schema v3.2.0).
-        # §9 followup: add prompt field to DPOSample in a future pet-schema release.
-        pair_dict["prompt"] = prompt_text
-        pairs.append(pair_dict)
+        pairs.append(pair.model_dump())
 
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
