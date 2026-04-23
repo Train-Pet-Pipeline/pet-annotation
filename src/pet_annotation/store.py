@@ -322,7 +322,10 @@ class AnnotationStore:
         Returns:
             Number of newly inserted annotation_targets rows (idempotent: 0 on re-ingest).
         """
-        petdata_conn = sqlite3.connect(pet_data_db_path, timeout=10)
+        # Read-only URI mode (D1 enforcement); prevents accidental writes across repos.
+        petdata_conn = sqlite3.connect(
+            f"file:{pet_data_db_path}?mode=ro", uri=True, timeout=10
+        )
         try:
             cur = petdata_conn.execute(
                 "SELECT frame_id FROM frames "

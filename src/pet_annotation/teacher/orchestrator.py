@@ -107,6 +107,11 @@ class AnnotationOrchestrator:
             for llm_cfg in config.llm.annotators
         }
         self._semaphore = asyncio.Semaphore(config.llm.max_concurrent)
+        # Lock serializes sqlite3 writes across asyncio tasks sharing one connection.
+        # Python's sqlite3.Connection is not safe for interleaved execute/commit from
+        # concurrent coroutines; without this lock, coroutine A's insert can be committed
+        # inside coroutine B's implicit transaction, losing rollback boundaries.
+        self._write_lock = asyncio.Lock()
         self._shutdown = False
 
     async def run(self) -> dict[str, int]:
@@ -225,7 +230,7 @@ class AnnotationOrchestrator:
                 target_id=target_id,
                 annotator_id=llm_cfg.id,
                 annotator_type="llm",
-                modality="vision",
+                modality=self._config.annotation.modality_default,
                 schema_version=self._config.annotation.schema_version,
                 created_at=datetime.now(UTC),
                 storage_uri=None,
@@ -233,8 +238,10 @@ class AnnotationOrchestrator:
                 raw_response=raw_response,
                 parsed_output=parsed,
             )
-            self._store.insert_llm(ann)
-            self._store.mark_target_done(target_id, llm_cfg.id)
+            # Serialize sqlite writes across concurrent tasks — see __init__ comment.
+            async with self._write_lock:
+                self._store.insert_llm(ann)
+                self._store.mark_target_done(target_id, llm_cfg.id)
 
             logger.info(
                 f'{{"event": "annotated", "target_id": "{target_id}", '

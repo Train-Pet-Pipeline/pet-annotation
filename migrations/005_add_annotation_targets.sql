@@ -13,4 +13,4 @@ CREATE TABLE annotation_targets (
     PRIMARY KEY (target_id, annotator_id)
 );
 CREATE INDEX idx_targets_state ON annotation_targets(state);
-CREATE INDEX idx_targets_type  ON annotation_targets(annotator_type)
+CREATE INDEX idx_targets_type  ON annotation_targets(annotator_type);
