@@ -633,12 +633,14 @@ class AnnotationOrchestrator:
             api_key = llm_cfg.api_key
             prompt_pair = (system_prompt, user_prompt)
 
-            # Providers have async annotate(image_path, prompt, api_key).
-            # For Phase 4 MVP, target_id is the frame path or identifier.
-            # We pass target_id as image_path — callers are responsible for
-            # providing resolvable paths (orchestrator consumer sets pet_data_db_path).
+            # Resolve storage_uri from pet-data frames table (MVP fix).
+            # Falls back to target_id when the frames table lacks a storage_uri column
+            # or the row is not found (e.g., minimal test fixtures).
+            storage_uri = await self._fetch_storage_uri(target_id)
+            image_path = storage_uri if storage_uri is not None else target_id
+
             raw_response, prompt_tokens, completion_tokens = await self._call_provider(
-                provider, target_id, prompt_pair, api_key
+                provider, image_path, prompt_pair, api_key
             )
 
             # Validate against pet-schema
@@ -661,7 +663,7 @@ class AnnotationOrchestrator:
                 modality=self._config.annotation.modality_default,
                 schema_version=self._config.annotation.schema_version,
                 created_at=datetime.now(UTC),
-                storage_uri=None,
+                storage_uri=storage_uri,
                 prompt_hash=prompt_hash,
                 raw_response=raw_response,
                 parsed_output=parsed,
@@ -703,9 +705,13 @@ class AnnotationOrchestrator:
             Exception: On inference error or store write failure.
         """
         async with semaphore:
+            # Resolve storage_uri from pet-data frames table; fall back to target_id.
+            storage_uri = await self._fetch_storage_uri(target_id)
+            target_data = storage_uri if storage_uri is not None else target_id
+
             predicted_class, class_probs, logits = await asyncio.to_thread(
                 plugin.annotate,
-                target_id,
+                target_data,
                 **cls_cfg.extra_params,
             )
 
@@ -718,7 +724,7 @@ class AnnotationOrchestrator:
                 modality=self._config.annotation.modality_default,
                 schema_version=self._config.annotation.schema_version,
                 created_at=datetime.now(UTC),
-                storage_uri=None,
+                storage_uri=storage_uri,
                 predicted_class=predicted_class,
                 class_probs=class_probs,
                 logits=logits,
