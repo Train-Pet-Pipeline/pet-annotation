@@ -44,6 +44,8 @@ class ModelConfig(BaseModel):
     accounts: list[AccountConfig]
     timeout: int = 60
     max_retries: int = 3
+    temperature: float = 0.1
+    max_tokens: int = 2048
 
 
 class DatabaseConfig(BaseModel):

@@ -111,6 +111,72 @@ class TestDoubaoProvider:
         assert provider.supports_batch() is False
 
 
+class TestBuildPayload:
+    """Tests for OpenAICompatProvider._build_payload shared helper."""
+
+    @pytest.fixture
+    def provider(self, tmp_path):
+        return OpenAICompatProvider(
+            base_url="http://test.example.com/v1",
+            model_name="test-model",
+            temperature=0.2,
+            max_tokens=1024,
+        )
+
+    @pytest.fixture
+    def sample_image(self, tmp_path: Path) -> Path:
+        img = tmp_path / "frame.jpg"
+        img.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+        return img
+
+    def test_payload_has_model(self, provider, sample_image):
+        """_build_payload returns payload with correct model name."""
+        payload = provider._build_payload(str(sample_image), ("sys", "usr"))
+        assert payload["model"] == "test-model"
+
+    def test_payload_temperature_from_config(self, provider, sample_image):
+        """_build_payload uses temperature from provider config, not hardcode."""
+        payload = provider._build_payload(str(sample_image), ("sys", "usr"))
+        assert payload["temperature"] == 0.2
+
+    def test_payload_max_tokens_from_config(self, provider, sample_image):
+        """_build_payload uses max_tokens from provider config, not hardcode."""
+        payload = provider._build_payload(str(sample_image), ("sys", "usr"))
+        assert payload["max_tokens"] == 1024
+
+    def test_payload_messages_shape(self, provider, sample_image):
+        """_build_payload includes system + user messages with image."""
+        payload = provider._build_payload(str(sample_image), ("system msg", "user msg"))
+        msgs = payload["messages"]
+        assert msgs[0]["role"] == "system"
+        assert msgs[0]["content"] == "system msg"
+        assert msgs[1]["role"] == "user"
+        content_parts = msgs[1]["content"]
+        assert any(p.get("type") == "image_url" for p in content_parts)
+        assert any(p.get("type") == "text" for p in content_parts)
+
+    def test_vllm_payload_identical_to_openai_compat(self, tmp_path):
+        """VLLMProvider and OpenAICompatProvider build identical payloads for same input."""
+        img = tmp_path / "frame.jpg"
+        img.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+        prompt: PromptPair = ("sys", "usr")
+
+        oai = OpenAICompatProvider(
+            "http://api.example.com/v1", "my-model", temperature=0.1, max_tokens=2048
+        )
+        vllm = VLLMProvider(
+            "http://localhost:8000/v1", "my-model", temperature=0.1, max_tokens=2048
+        )
+
+        oai_payload = oai._build_payload(str(img), prompt)
+        vllm_payload = vllm._build_payload(str(img), prompt)
+
+        # Messages and generation params must be identical
+        assert oai_payload["messages"] == vllm_payload["messages"]
+        assert oai_payload["temperature"] == vllm_payload["temperature"]
+        assert oai_payload["max_tokens"] == vllm_payload["max_tokens"]
+
+
 class TestVLLMProvider:
     async def test_annotate_no_auth_header(self, tmp_path):
         """Test VLLM provider skips auth header when api_key is empty."""
