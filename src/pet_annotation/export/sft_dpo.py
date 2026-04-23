@@ -1,30 +1,53 @@
 """SFT and DPO export functions for the 4-paradigm annotation store.
 
-Exports annotation data to JSONL format suitable for SFT/DPO training.
+Exports annotation data to JSONL format suitable for LLaMA-Factory consumption.
 
-SFT format (one line per done annotation):
-    {"sample_id": str, "annotator_id": str, "annotator_type": str,
-     "input": str, "output": str, "storage_uri": str | null}
+SFT format (LLaMA-Factory ShareGPT conversations, one line per LLM/human annotation):
+    {"conversations": [{"from": "system", "value": <system_prompt>},
+                       {"from": "human", "value": <user_prompt>},
+                       {"from": "gpt", "value": <annotation_output>}],
+     "sample_id": str, "source_target_id": str, "annotator_id": str}
 
-DPO format (one line per chosen/rejected pair, from LLM annotations for same target):
-    {"sample_id": str, "chosen": str, "rejected": str,
-     "chosen_annotator_id": str, "rejected_annotator_id": str}
+DPO format (LLaMA-Factory Alpaca DPO, one line per chosen/rejected pair):
+    {"prompt": <prompt_text>, "chosen": str, "rejected": str}
 
-DPO pairs are derived from targets annotated by 2+ LLM annotators; the annotation
-with higher schema validation confidence is chosen. If only one annotation per target,
-that target is skipped for DPO (no rejected to pair against).
+Notes
+-----
+- Classifier and rule paradigms are **not** emitted as SFT/DPO: their data is consumed
+  by the audio_cnn_trainer and rule-based pipelines in pet-train, not by LLaMA-Factory.
+  Calling to_sft_samples(annotator_type="classifier"|"rule") emits a warning and returns
+  an empty list.
+- Human paradigm produces valid SFT samples: the gpt turn is the serialised human
+  decision (decision/reviewer/notes) as JSON.
+- Prompt text is reconstructed from ``schema_version`` via
+  ``pet_schema.renderer.render_prompt(schema_version)``.  The reconstruction is
+  deterministic for a given schema version but does **not** include runtime-variable
+  parts (e.g. storage_uri injected into the vision prompt by the provider at inference
+  time).  This is flagged as a §9 followup concern ("prompt storage", migration 006:
+  store the rendered prompt per annotation row so reconstruction is exact).
+- Every emitted sample is validated with ``ShareGPTSFTSample.model_validate()`` or
+  ``DPOSample.model_validate()`` before write.  A ``pydantic.ValidationError`` is
+  propagated immediately so exporter drift is caught at produce time, not consume time.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import warnings
 from collections.abc import Iterable
 from pathlib import Path
+
+from pet_schema import DPOSample, ShareGPTSFTSample, ShareGPTTurn
+from pet_schema.renderer import render_prompt
 
 from pet_annotation.store import AnnotationStore
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Internal row iterators (unchanged from pre-rewrite)
+# ---------------------------------------------------------------------------
 
 
 def _iter_done_llm_rows(store: AnnotationStore) -> Iterable[dict]:
@@ -119,82 +142,142 @@ def _iter_done_human_rows(store: AnnotationStore) -> Iterable[dict]:
         }
 
 
+# ---------------------------------------------------------------------------
+# Prompt reconstruction helper
+# ---------------------------------------------------------------------------
+
+# Cache rendered prompts per (schema_version, few_shot) to avoid re-reading disk
+_PROMPT_CACHE: dict[tuple[str, bool], tuple[str, str]] = {}
+
+
+def _get_prompt(schema_version: str) -> tuple[str, str]:
+    """Return (system_prompt, user_prompt) for a schema_version.
+
+    Prompts are cached in-process.  Falls back to a placeholder if the schema
+    version directory does not exist (e.g. schema_version="1.0" used in tests
+    where prompt files may not be present under pet-schema's installed copy).
+    The fallback emits a warning so callers are aware.
+
+    §9 concern: This reconstruction is prompt-template-level only; it does not
+    include runtime image tokens / storage_uri that the LLM provider injected
+    at inference time.  A future migration 006 should store the rendered prompt
+    per llm_annotations row to eliminate this gap.
+    """
+    key = (schema_version, True)
+    if key in _PROMPT_CACHE:
+        return _PROMPT_CACHE[key]
+    try:
+        result = render_prompt(version=schema_version, few_shot=True)
+        _PROMPT_CACHE[key] = result
+        return result
+    except FileNotFoundError:
+        warnings.warn(
+            f"Prompt files not found for schema_version={schema_version!r}; "
+            "using placeholder prompt text.  This is expected in tests but "
+            "MUST be resolved in production (see §9 followup: migration 006).",
+            stacklevel=3,
+        )
+        placeholder = (
+            f"[system prompt for schema_version={schema_version!r} — "
+            "prompt files not found; see §9 migration 006]"
+        )
+        fallback = (placeholder, placeholder)
+        _PROMPT_CACHE[key] = fallback
+        return fallback
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
 def to_sft_samples(
     store: AnnotationStore,
     annotator_type: str = "llm",
     output_path: Path | None = None,
 ) -> list[dict]:
-    """Export done annotations to SFT JSONL format.
+    """Export done annotations to SFT JSONL format (LLaMA-Factory ShareGPT).
 
-    Each sample is a dict with keys: sample_id, annotator_id, annotator_type,
-    input (= storage_uri or target_id), output (= annotation content as JSON string).
+    Each sample is a ``ShareGPTSFTSample`` with a ``conversations`` list.  For
+    LLM and human paradigms, conversations follow the human/gpt turn pattern.
+    Classifier and rule paradigms are skipped (not natural SFT/DPO shape —
+    those data pipelines go through pet-train's non-LLaMA-Factory plugins).
+
+    Every emitted sample is validated via ``ShareGPTSFTSample.model_validate()``
+    before write; a ``pydantic.ValidationError`` propagates immediately.
 
     Args:
         store: Initialised AnnotationStore.
         annotator_type: Which paradigm table to read from ('llm', 'classifier',
             'rule', 'human'). Defaults to 'llm'.
-        output_path: If provided, write JSONL to this path. Otherwise, return
+        output_path: If provided, write JSONL to this path.  Otherwise return
             list of sample dicts without writing.
 
     Returns:
-        List of sample dicts (one per done annotation).
+        List of sample dicts (by_alias=True — JSON field names).
+
+    Raises:
+        ValueError: If annotator_type is unrecognised.
+        pydantic.ValidationError: If any emitted sample fails schema validation.
     """
     samples: list[dict] = []
 
-    if annotator_type == "llm":
+    if annotator_type in ("classifier", "rule"):
+        warnings.warn(
+            f"to_sft_samples(annotator_type={annotator_type!r}) called: "
+            f"{annotator_type} data is not SFT/DPO-compatible (text-to-text) and "
+            "is consumed by pet-train's dedicated classifier/rule plugins, not by "
+            "LLaMA-Factory SFT.  Returning empty list.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return []
+
+    elif annotator_type == "llm":
         for row in _iter_done_llm_rows(store):
-            samples.append({
-                "sample_id": row["target_id"],
-                "annotator_id": row["annotator_id"],
-                "annotator_type": "llm",
-                "input": row["storage_uri"] or row["target_id"],
-                "output": row["raw_response"],
-                "storage_uri": row["storage_uri"],
-            })
-
-    elif annotator_type == "classifier":
-        for row in _iter_done_classifier_rows(store):
-            samples.append({
-                "sample_id": row["target_id"],
-                "annotator_id": row["annotator_id"],
-                "annotator_type": "classifier",
-                "input": row["storage_uri"] or row["target_id"],
-                "output": json.dumps({
-                    "predicted_class": row["predicted_class"],
-                    "class_probs": row["class_probs"],
-                }),
-                "storage_uri": row["storage_uri"],
-            })
-
-    elif annotator_type == "rule":
-        for row in _iter_done_rule_rows(store):
-            samples.append({
-                "sample_id": row["target_id"],
-                "annotator_id": row["annotator_id"],
-                "annotator_type": "rule",
-                "input": row["storage_uri"] or row["target_id"],
-                "output": json.dumps(row["rule_output"]),
-                "storage_uri": row["storage_uri"],
-            })
+            system_prompt, user_prompt = _get_prompt(row["schema_version"])
+            output_text = row["raw_response"] or json.dumps(row["parsed_output"])
+            sample = ShareGPTSFTSample(
+                conversations=[
+                    ShareGPTTurn(**{"from": "system", "value": system_prompt}),
+                    ShareGPTTurn(**{"from": "human", "value": user_prompt}),
+                    ShareGPTTurn(**{"from": "gpt", "value": output_text}),
+                ],
+                sample_id=row["target_id"],
+                source_target_id=row["target_id"],
+                annotator_id=row["annotator_id"],
+            )
+            ShareGPTSFTSample.model_validate(sample.model_dump(by_alias=True))
+            samples.append(sample.model_dump(by_alias=True))
 
     elif annotator_type == "human":
+        # Human annotations are serialised as JSON in the gpt turn; system/user
+        # prompts are placeholders since human review does not use an LLM prompt.
         for row in _iter_done_human_rows(store):
-            samples.append({
-                "sample_id": row["target_id"],
-                "annotator_id": row["annotator_id"],
-                "annotator_type": "human",
-                "input": row["storage_uri"] or row["target_id"],
-                "output": json.dumps({
-                    "decision": row["decision"],
-                    "reviewer": row["reviewer"],
-                    "notes": row["notes"],
-                }),
-                "storage_uri": row["storage_uri"],
-            })
+            human_out = json.dumps({
+                "decision": row["decision"],
+                "reviewer": row["reviewer"],
+                "notes": row["notes"],
+            }, ensure_ascii=False)
+            prompt_text = (
+                f"Review annotation for target {row['target_id']!r}. "
+                "Provide decision (accept/reject), reviewer ID, and notes."
+            )
+            sample = ShareGPTSFTSample(
+                conversations=[
+                    ShareGPTTurn(**{"from": "human", "value": prompt_text}),
+                    ShareGPTTurn(**{"from": "gpt", "value": human_out}),
+                ],
+                sample_id=row["target_id"],
+                source_target_id=row["target_id"],
+                annotator_id=row["annotator_id"],
+            )
+            ShareGPTSFTSample.model_validate(sample.model_dump(by_alias=True))
+            samples.append(sample.model_dump(by_alias=True))
 
     else:
         raise ValueError(
-            f"Unknown annotator_type '{annotator_type}'. "
+            f"Unknown annotator_type {annotator_type!r}. "
             "Must be one of: llm, classifier, rule, human."
         )
 
@@ -213,71 +296,92 @@ def to_dpo_pairs(
     annotator_type: str = "llm",
     output_path: Path | None = None,
 ) -> list[dict]:
-    """Export done annotations to DPO JSONL format.
+    """Export done annotations to DPO JSONL format (LLaMA-Factory Alpaca DPO).
 
     For LLM paradigm: groups annotations by target_id; if a target has 2+
     annotations from different annotators, the annotation with higher
-    confidence_overall becomes 'chosen' and the other 'rejected'.
+    ``confidence_overall`` becomes 'chosen' and the other 'rejected'.  The
+    ``prompt`` field is reconstructed from the schema_version via
+    ``render_prompt()`` (concatenation of system + user prompt).
 
-    For classifier/rule/human: no natural chosen/rejected pairing; emits
-    each annotation as a self-paired sample with chosen == rejected marked
-    with a note (single-annotation target), so downstream pipelines can filter.
+    For classifier/rule/human: returns empty list with a warning.  Classifier
+    and rule data are not consumed by LLaMA-Factory DPO; human DPO pairs are
+    not formed automatically here (no natural chosen/rejected signal).
+
+    Every emitted pair is validated via ``DPOSample.model_validate()`` before
+    write; a ``pydantic.ValidationError`` propagates immediately.
 
     Args:
         store: Initialised AnnotationStore.
-        annotator_type: Which paradigm table to read from.
+        annotator_type: Which paradigm to export pairs for.
         output_path: If provided, write JSONL to this path.
 
     Returns:
         List of pair dicts.
+
+    Raises:
+        ValueError: If annotator_type is unrecognised.
+        pydantic.ValidationError: If any emitted pair fails schema validation.
     """
     pairs: list[dict] = []
 
-    if annotator_type == "llm":
-        # Group by target_id
-        target_rows: dict[str, list[dict]] = {}
-        for row in _iter_done_llm_rows(store):
-            target_rows.setdefault(row["target_id"], []).append(row)
+    if annotator_type != "llm":
+        warnings.warn(
+            f"to_dpo_pairs(annotator_type={annotator_type!r}) called: "
+            "DPO pair formation is only meaningful for the 'llm' paradigm.  "
+            "Classifier/rule pairs have no confidence signal; human DPO pairs "
+            "require manual preference signal.  Returning empty list.",
+            UserWarning,
+            stacklevel=2,
+        )
+        if annotator_type not in ("classifier", "rule", "human"):
+            raise ValueError(
+                f"Unknown annotator_type {annotator_type!r}. "
+                "Must be one of: llm, classifier, rule, human."
+            )
+        return []
 
-        for target_id, rows in target_rows.items():
-            if len(rows) < 2:
-                continue  # Need at least 2 annotations to form a pair
+    # Group by target_id
+    target_rows: dict[str, list[dict]] = {}
+    for row in _iter_done_llm_rows(store):
+        target_rows.setdefault(row["target_id"], []).append(row)
 
-            # Sort by confidence_overall (best-effort extraction from parsed_output)
-            def _confidence(r: dict) -> float:
-                try:
-                    return float(
-                        r["parsed_output"].get("scene", {}).get("confidence_overall", 0)
-                    )
-                except (TypeError, ValueError):
-                    return 0.0
+    for target_id, rows in target_rows.items():
+        if len(rows) < 2:
+            continue  # Need at least 2 annotations to form a pair
 
-            sorted_rows = sorted(rows, key=_confidence, reverse=True)
-            chosen = sorted_rows[0]
-            rejected = sorted_rows[-1]
+        def _confidence(r: dict) -> float:
+            """Extract confidence_overall from parsed_output."""
+            try:
+                return float(
+                    r["parsed_output"].get("scene", {}).get("confidence_overall", 0)
+                )
+            except (TypeError, ValueError):
+                return 0.0
 
-            pairs.append({
-                "sample_id": target_id,
-                "chosen": chosen["raw_response"],
-                "rejected": rejected["raw_response"],
-                "chosen_annotator_id": chosen["annotator_id"],
-                "rejected_annotator_id": rejected["annotator_id"],
-                "storage_uri": chosen["storage_uri"],
-            })
+        sorted_rows = sorted(rows, key=_confidence, reverse=True)
+        chosen = sorted_rows[0]
+        rejected = sorted_rows[-1]
 
-    else:
-        # For non-LLM paradigms, emit single-annotation samples as DPO-ready format.
-        # Chosen and rejected are identical; downstream can augment/filter.
-        samples = to_sft_samples(store, annotator_type=annotator_type)
-        for s in samples:
-            pairs.append({
-                "sample_id": s["sample_id"],
-                "chosen": s["output"],
-                "rejected": s["output"],
-                "chosen_annotator_id": s["annotator_id"],
-                "rejected_annotator_id": s["annotator_id"],
-                "storage_uri": s["storage_uri"],
-            })
+        # Reconstruct prompt from schema_version (same for all rows in a target group)
+        system_prompt, user_prompt = _get_prompt(chosen["schema_version"])
+        prompt_text = f"{system_prompt}\n\n{user_prompt}"
+
+        pair = DPOSample(
+            sample_id=target_id,
+            chosen=chosen["raw_response"],
+            rejected=rejected["raw_response"],
+            chosen_annotator_id=chosen["annotator_id"],
+            rejected_annotator_id=rejected["annotator_id"],
+            storage_uri=chosen["storage_uri"],
+        )
+        DPOSample.model_validate(pair.model_dump())
+        pair_dict = pair.model_dump()
+        # Inject prompt for LLaMA-Factory Alpaca DPO consumption.
+        # DPOSample does not currently carry a prompt field (pet-schema v3.2.0).
+        # §9 followup: add prompt field to DPOSample in a future pet-schema release.
+        pair_dict["prompt"] = prompt_text
+        pairs.append(pair_dict)
 
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
