@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -24,7 +24,6 @@ from pet_annotation.config import (
 )
 from pet_annotation.store import AnnotationStore
 from pet_annotation.teacher.orchestrator import AnnotationOrchestrator
-
 
 _VALID_RESPONSE = json.dumps({
     "scene": {"confidence_overall": 0.9, "pets": [{"species": "cat", "activity": "eating"}]}
@@ -236,8 +235,9 @@ async def test_llm_provider_fallback_to_target_id(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_classifier_plugin_receives_storage_uri(tmp_path: Path) -> None:
     """When storage_uri exists, plugin.annotate called with resolved URI."""
-    from pet_annotation.classifiers.base import BaseClassifierAnnotator
     from typing import ClassVar
+
+    from pet_annotation.classifiers.base import BaseClassifierAnnotator
 
     received_target_data: list[str] = []
 

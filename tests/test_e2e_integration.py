@@ -24,13 +24,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
-from pet_annotation.classifiers.base import BaseClassifierAnnotator, NoopClassifier
+from pet_annotation.classifiers.base import NoopClassifier
 from pet_annotation.config import (
     ClassifierAnnotatorConfig,
     ClassifierParadigmConfig,
@@ -298,7 +297,7 @@ async def test_e2e_full_pipeline(tmp_path: Path) -> None:
     # ------------------------------------------------------------------
     # Export SFT: llm annotator → 5 valid JSONL entries
     # ------------------------------------------------------------------
-    from pet_annotation.export.sft_dpo import to_sft_samples, to_dpo_pairs
+    from pet_annotation.export.sft_dpo import to_dpo_pairs, to_sft_samples
 
     sft_samples = to_sft_samples(store, annotator_type="llm")
     assert len(sft_samples) == 5
