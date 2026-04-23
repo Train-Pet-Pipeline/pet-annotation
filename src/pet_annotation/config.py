@@ -67,6 +67,12 @@ class AnnotationParams(BaseModel):
     schema_version: str = "1.0"
 
 
+class QualityParams(BaseModel):
+    """Quality-check tuning parameters."""
+
+    anomaly_threshold: float = 0.3
+
+
 class DpoParams(BaseModel):
     """DPO pair generation parameters."""
 
@@ -79,6 +85,7 @@ class AnnotationConfig(BaseModel):
     database: DatabaseConfig
     annotation: AnnotationParams
     models: dict[str, ModelConfig]
+    quality: QualityParams = QualityParams()
     dpo: DpoParams
 
 

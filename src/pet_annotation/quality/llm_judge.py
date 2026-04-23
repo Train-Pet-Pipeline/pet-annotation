@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 def run_llm_judge(
     primary_output: dict[str, Any],
     comparison_output: dict[str, Any] | None,
+    anomaly_threshold: float = 0.3,
 ) -> dict[str, Any]:
     """Cross-check primary annotation against comparison model output.
 
@@ -27,6 +28,9 @@ def run_llm_judge(
         primary_output: Parsed JSON output from the primary model.
         comparison_output: Parsed JSON output from the comparison model,
             or None if unavailable.
+        anomaly_threshold: Maximum allowed absolute difference for anomaly signals
+            before flagging a disagreement. Loaded from params.yaml
+            quality.anomaly_threshold (default 0.3).
 
     Returns:
         Dict with keys:
@@ -85,7 +89,7 @@ def run_llm_judge(
         checks_total += 1
         p_val = primary_anomaly.get(signal_name, 0.0) or 0.0
         c_val = comparison_anomaly.get(signal_name, 0.0) or 0.0
-        if abs(p_val - c_val) < 0.3:
+        if abs(p_val - c_val) < anomaly_threshold:
             checks_passed += 1
         else:
             disagreements.append(f"anomaly_signals.{signal_name}")

@@ -49,6 +49,9 @@ models:
     timeout: 120
     max_retries: 2
 
+quality:
+  anomaly_threshold: 0.3
+
 dpo:
   min_pairs_per_release: 500
 
