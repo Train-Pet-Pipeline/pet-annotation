@@ -26,11 +26,12 @@ class BaseRuleAnnotator(ABC):
     rule_id: ClassVar[str]
 
     @abstractmethod
-    def apply(self, target_metadata: dict) -> dict:
+    def apply(self, target_metadata: dict, **kwargs: object) -> dict:
         """Apply rule to target metadata.
 
         Args:
             target_metadata: Dict of metadata columns from the pet-data frames row.
+            **kwargs: Plugin-specific runtime params from RuleAnnotatorConfig.extra_params.
 
         Returns:
             rule_output dict (must be JSON-serializable). Return an empty dict {}
@@ -58,11 +59,12 @@ class BrightnessRule(BaseRuleAnnotator):
         """
         self.threshold = threshold
 
-    def apply(self, target_metadata: dict) -> dict:
+    def apply(self, target_metadata: dict, **kwargs: object) -> dict:
         """Apply brightness threshold rule to target metadata.
 
         Args:
             target_metadata: Dict that may contain 'brightness_score' float field.
+            **kwargs: Accepted for interface compatibility; not used by this rule.
 
         Returns:
             Dict with 'label', 'score', 'threshold' keys, or {} if field absent.

@@ -95,7 +95,8 @@ def annotate(batch_size, dry_run, params, db, annotator, modality, pet_data_db):
     )
 
     orch = AnnotationOrchestrator(config, store, pet_data_db_path)
-    stats = asyncio.run(orch.run())
+    # --annotator selects exactly one paradigm to run (symmetric to --dry-run output).
+    stats = asyncio.run(orch.run(paradigms=[annotator]))
     click.echo(
         f"processed={stats['processed']} skipped={stats['skipped']} failed={stats['failed']}"
     )

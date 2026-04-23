@@ -127,11 +127,17 @@ class AnnotationOrchestrator:
         self._write_lock = asyncio.Lock()
         self._shutdown = False
 
-    async def run(self) -> dict[str, int]:
-        """Main dispatch loop for all configured paradigms (LLM, classifier, rule).
+    async def run(self, paradigms: list[str] | None = None) -> dict[str, int]:
+        """Main dispatch loop for selected paradigms (LLM, classifier, rule).
 
-        Dispatches each paradigm in sequence: LLM → classifier → rule.
+        Dispatches each enabled paradigm in sequence: LLM → classifier → rule.
         Each paradigm returns its own stats; totals are accumulated.
+
+        Args:
+            paradigms: Optional list restricting which paradigms to dispatch
+                (subset of {"llm","classifier","rule"}). None (default) = all
+                configured paradigms. CLI passes [annotator] when --annotator
+                is specified so a single-paradigm run doesn't trigger others.
 
         Returns:
             Stats dict: {"processed": N, "skipped": M, "failed": K}
@@ -139,29 +145,38 @@ class AnnotationOrchestrator:
         self._setup_signal_handlers()
 
         stats: dict[str, int] = {"processed": 0, "skipped": 0, "failed": 0}
+        enabled = set(paradigms) if paradigms is not None else {"llm", "classifier", "rule"}
 
         if not (
-            self._config.llm.annotators
-            or self._config.classifier.annotators
-            or self._config.rule.annotators
+            (self._config.llm.annotators and "llm" in enabled)
+            or (self._config.classifier.annotators and "classifier" in enabled)
+            or (self._config.rule.annotators and "rule" in enabled)
         ):
             logger.info('{"event": "no_annotators_configured"}')
             return stats
 
         # LLM paradigm
-        if self._config.llm.annotators:
+        if "llm" in enabled and self._config.llm.annotators:
             llm_stats = await self._run_llm_paradigm()
             for k in stats:
                 stats[k] += llm_stats[k]
 
         # Classifier paradigm
-        if self._config.classifier.annotators and not self._shutdown:
+        if (
+            "classifier" in enabled
+            and self._config.classifier.annotators
+            and not self._shutdown
+        ):
             cls_stats = await self._run_classifier_paradigm()
             for k in stats:
                 stats[k] += cls_stats[k]
 
         # Rule paradigm
-        if self._config.rule.annotators and not self._shutdown:
+        if (
+            "rule" in enabled
+            and self._config.rule.annotators
+            and not self._shutdown
+        ):
             rule_stats = await self._run_rule_paradigm()
             for k in stats:
                 stats[k] += rule_stats[k]
@@ -212,7 +227,8 @@ class AnnotationOrchestrator:
                 for tid, res in zip(target_ids, results):
                     if isinstance(res, Exception):
                         stats["failed"] += 1
-                        self._store.mark_target_failed(tid, llm_cfg.id, str(res))
+                        async with self._write_lock:
+                            self._store.mark_target_failed(tid, llm_cfg.id, str(res))
                         logger.error(
                             f'{{"event": "target_failed", "target_id": "{tid}", '
                             f'"annotator_id": "{llm_cfg.id}", "error": "{res}"}}'
@@ -270,7 +286,8 @@ class AnnotationOrchestrator:
                 for tid, res in zip(target_ids, results):
                     if isinstance(res, Exception):
                         stats["failed"] += 1
-                        self._store.mark_target_failed(tid, cls_cfg.id, str(res))
+                        async with self._write_lock:
+                            self._store.mark_target_failed(tid, cls_cfg.id, str(res))
                         logger.error(
                             f'{{"event": "classifier_target_failed", "target_id": "{tid}", '
                             f'"annotator_id": "{cls_cfg.id}", "error": "{res}"}}'
@@ -328,7 +345,8 @@ class AnnotationOrchestrator:
                 for tid, res in zip(target_ids, results):
                     if isinstance(res, Exception):
                         stats["failed"] += 1
-                        self._store.mark_target_failed(tid, rule_cfg.id, str(res))
+                        async with self._write_lock:
+                            self._store.mark_target_failed(tid, rule_cfg.id, str(res))
                         logger.error(
                             f'{{"event": "rule_target_failed", "target_id": "{tid}", '
                             f'"annotator_id": "{rule_cfg.id}", "error": "{res}"}}'
