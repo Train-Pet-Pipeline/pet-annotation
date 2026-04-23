@@ -21,7 +21,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from pet_schema import ClassifierAnnotation, LLMAnnotation, RuleAnnotation
+from pet_schema import ClassifierAnnotation, HumanAnnotation, LLMAnnotation, RuleAnnotation
 from pet_schema.renderer import render_prompt
 from pet_schema.validator import validate_output
 
@@ -29,9 +29,12 @@ from pet_annotation.classifiers.base import BaseClassifierAnnotator
 from pet_annotation.config import (
     AnnotationConfig,
     ClassifierAnnotatorConfig,
+    HumanAnnotatorConfig,
     LLMAnnotatorConfig,
     RuleAnnotatorConfig,
 )
+from pet_annotation.human_review.ls_auth import get_ls_session
+from pet_annotation.human_review.ls_client import LSClient
 from pet_annotation.rules.base import BaseRuleAnnotator
 from pet_annotation.store import AnnotationStore
 from pet_annotation.teacher.providers.openai_compat import OpenAICompatProvider
@@ -145,12 +148,15 @@ class AnnotationOrchestrator:
         self._setup_signal_handlers()
 
         stats: dict[str, int] = {"processed": 0, "skipped": 0, "failed": 0}
-        enabled = set(paradigms) if paradigms is not None else {"llm", "classifier", "rule"}
+        enabled = set(paradigms) if paradigms is not None else {
+            "llm", "classifier", "rule", "human"
+        }
 
         if not (
             (self._config.llm.annotators and "llm" in enabled)
             or (self._config.classifier.annotators and "classifier" in enabled)
             or (self._config.rule.annotators and "rule" in enabled)
+            or (self._config.human.annotators and "human" in enabled)
         ):
             logger.info('{"event": "no_annotators_configured"}')
             return stats
@@ -180,6 +186,16 @@ class AnnotationOrchestrator:
             rule_stats = await self._run_rule_paradigm()
             for k in stats:
                 stats[k] += rule_stats[k]
+
+        # Human paradigm (async submit + pull in one call; does not block for LS completion)
+        if (
+            "human" in enabled
+            and self._config.human.annotators
+            and not self._shutdown
+        ):
+            human_stats = await self._run_human_paradigm()
+            for k in stats:
+                stats[k] += human_stats[k]
 
         logger.info(f'{{"event": "orchestrator_done", "stats": {json.dumps(stats)}}}')
         return stats
@@ -357,6 +373,237 @@ class AnnotationOrchestrator:
                         stats["skipped"] += 1
 
         return stats
+
+    async def _run_human_paradigm(self) -> dict[str, int]:
+        """Submit pending targets to Label Studio and pull any completed annotations.
+
+        Two-phase in a single call (Phase A = submit, Phase B = pull):
+        - Phase A: For each configured human annotator, ingest pending targets from
+          pet-data, claim a batch, fetch storage_uri, build LS task objects, submit
+          via LSClient.submit_tasks(). Targets remain 'in_progress' after submit.
+        - Phase B: Pull completed LS annotations and insert into human_annotations
+          table, marking the corresponding targets 'done'.
+
+        Returns:
+            Stats dict: {"processed": N, "skipped": M, "failed": K}
+            processed = pulled annotations inserted; skipped = no completed yet.
+        """
+        import os as _os
+
+        stats: dict[str, int] = {"processed": 0, "skipped": 0, "failed": 0}
+        annotator_ids = [a.id for a in self._config.human.annotators]
+
+        new_count = self._store.ingest_pending_from_petdata(
+            self._pet_data_db,
+            annotator_ids,
+            annotator_type="human",
+            modality=None,
+        )
+        logger.info(f'{{"event": "human_ingested_pending", "count": {new_count}}}')
+
+        for human_cfg in self._config.human.annotators:
+            if self._shutdown:
+                break
+
+            # Build LSClient; auth via API token from env var.
+            api_token = _os.environ.get(human_cfg.ls_api_token_env, "")
+            try:
+                session = get_ls_session(
+                    human_cfg.ls_base_url,
+                    api_key=api_token or None,
+                )
+            except Exception as exc:
+                logger.error(
+                    f'{{"event": "human_ls_auth_failed", "annotator_id": "{human_cfg.id}", '
+                    f'"error": "{exc}"}}'
+                )
+                stats["failed"] += 1
+                continue
+
+            ls_client = LSClient(
+                base_url=human_cfg.ls_base_url,
+                project_id=human_cfg.ls_project_id,
+                session=session,
+            )
+
+            # Phase A — submit pending targets to LS
+            await self._submit_human_batch(human_cfg, ls_client, stats)
+
+            # Phase B — pull completed annotations from LS
+            await self._pull_human_completed(human_cfg, ls_client, stats)
+
+        return stats
+
+    async def _submit_human_batch(
+        self,
+        human_cfg: HumanAnnotatorConfig,
+        ls_client: Any,
+        stats: dict[str, int],
+    ) -> None:
+        """Claim pending targets and submit them to Label Studio as tasks.
+
+        Each task carries the storage_uri (resolved from pet-data) and the
+        target_id in task meta for round-trip mapping on pull.
+
+        Args:
+            human_cfg: Human annotator config.
+            ls_client: Initialised LSClient for this annotator.
+            stats: Mutable stats dict; increments 'failed' on error.
+        """
+        while not self._shutdown:
+            target_ids = self._store.claim_pending_targets(
+                human_cfg.id, self._config.human.batch_size
+            )
+            if not target_ids:
+                break
+
+            tasks = []
+            for tid in target_ids:
+                storage_uri = await self._fetch_storage_uri(tid)
+                task: dict[str, Any] = {
+                    "data": {"image": storage_uri or tid},
+                    "meta": {"target_id": tid, "annotator_id": human_cfg.id},
+                }
+                tasks.append(task)
+
+            try:
+                task_ids = await asyncio.to_thread(ls_client.submit_tasks, tasks)
+                logger.info(
+                    f'{{"event": "human_tasks_submitted", "annotator_id": "{human_cfg.id}", '
+                    f'"count": {len(task_ids)}}}'
+                )
+            except Exception as exc:
+                # Submission failed: mark all claimed targets failed
+                async with self._write_lock:
+                    for tid in target_ids:
+                        self._store.mark_target_failed(tid, human_cfg.id, str(exc))
+                stats["failed"] += len(target_ids)
+                logger.error(
+                    f'{{"event": "human_submit_failed", "annotator_id": "{human_cfg.id}", '
+                    f'"error": "{exc}"}}'
+                )
+
+    async def _pull_human_completed(
+        self,
+        human_cfg: HumanAnnotatorConfig,
+        ls_client: Any,
+        stats: dict[str, int],
+    ) -> None:
+        """Fetch completed LS annotations and insert into human_annotations table.
+
+        For each completed LS task, extracts the target_id from task meta, builds a
+        HumanAnnotation and inserts it, then marks the annotation_target 'done'.
+
+        Args:
+            human_cfg: Human annotator config.
+            ls_client: Initialised LSClient for this annotator.
+            stats: Mutable stats dict; increments 'processed' on success.
+        """
+        try:
+            completed_tasks = await asyncio.to_thread(
+                ls_client.fetch_completed_annotations
+            )
+        except Exception as exc:
+            logger.error(
+                f'{{"event": "human_pull_failed", "annotator_id": "{human_cfg.id}", '
+                f'"error": "{exc}"}}'
+            )
+            stats["failed"] += 1
+            return
+
+        if not completed_tasks:
+            logger.info(
+                f'{{"event": "human_no_completed_tasks", "annotator_id": "{human_cfg.id}"}}'
+            )
+            return
+
+        for task in completed_tasks:
+            meta = task.get("meta") or {}
+            target_id = meta.get("target_id")
+            if not target_id:
+                task_id = task.get("id")
+                logger.warning(
+                    f'{{"event": "human_task_missing_target_id", '
+                    f'"annotator_id": "{human_cfg.id}", "task_id": "{task_id}"}}'
+                )
+                continue
+
+            # Only process tasks that are currently in_progress for this annotator.
+            state = self._store.get_target_state(target_id, human_cfg.id)
+            if state != "in_progress":
+                continue
+
+            # Use the first annotation result from the task.
+            annotations_list = task.get("annotations") or []
+            if not annotations_list:
+                continue
+            first_ann = annotations_list[0]
+            result = first_ann.get("result") or []
+            reviewer = first_ann.get("completed_by", {})
+            reviewer_str = str(reviewer.get("email") or reviewer.get("id") or "unknown")
+
+            # Determine decision from annotation result (best-effort).
+            decision = "accept"
+            notes_parts = []
+            for item in result:
+                value = item.get("value", {})
+                # Support common LS result shapes: choices, taxonomy, textarea.
+                if "choices" in value:
+                    decision = str(value["choices"][0]) if value["choices"] else "accept"
+                elif "text" in value:
+                    notes_parts.append(str(value["text"][0]) if value["text"] else "")
+            notes = "; ".join(notes_parts) or None
+
+            annotation_id = f"{target_id}:{human_cfg.id}:{uuid.uuid4().hex[:8]}"
+            ann = HumanAnnotation(
+                annotation_id=annotation_id,
+                target_id=target_id,
+                annotator_id=human_cfg.id,
+                annotator_type="human",
+                modality=self._config.annotation.modality_default,
+                schema_version=self._config.annotation.schema_version,
+                created_at=datetime.now(UTC),
+                storage_uri=None,
+                reviewer=reviewer_str,
+                decision=decision,
+                notes=notes,
+            )
+            async with self._write_lock:
+                self._store.insert_human(ann)
+                self._store.mark_target_done(target_id, human_cfg.id)
+
+            stats["processed"] += 1
+            logger.info(
+                f'{{"event": "human_annotation_pulled", "target_id": "{target_id}", '
+                f'"annotator_id": "{human_cfg.id}", "decision": "{decision}"}}'
+            )
+
+    async def _fetch_storage_uri(self, target_id: str) -> str | None:
+        """Fetch storage_uri from pet-data frames table (read-only).
+
+        Args:
+            target_id: The frame identifier (= frame_id in pet-data's frames table).
+
+        Returns:
+            storage_uri string if found; None if not found or column missing.
+        """
+        def _query() -> str | None:
+            """Run the synchronous SQLite query."""
+            conn = sqlite3.connect(
+                f"file:{self._pet_data_db}?mode=ro", uri=True, timeout=10
+            )
+            try:
+                row = conn.execute(
+                    "SELECT storage_uri FROM frames WHERE frame_id = ?", (target_id,)
+                ).fetchone()
+                return row[0] if row else None
+            except sqlite3.OperationalError:
+                # Column may not exist in minimal test fixtures.
+                return None
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_query)
 
     async def _process_one(
         self,
