@@ -1,3 +1,3 @@
 """pet-annotation: VLM annotation pipeline for pet feeder training data."""
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
