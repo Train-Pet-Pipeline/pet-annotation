@@ -1,6 +1,7 @@
 database:
   path: "/data/pet-data/pet_data.db"
   data_root: "/data/pet-data"
+  busy_timeout_ms: 10000
 
 annotation:
   batch_size: 16
@@ -11,6 +12,8 @@ annotation:
   primary_model: "qwen2.5-vl-72b"
   schema_version: "1.0"
   modality_default: vision
+  # pet-data read path (read-only; used by orchestrator to ingest pending frames)
+  pet_data_db_path: "/data/pet-data/pet_data.db"
 
 models:
   qwen2.5-vl-72b:
@@ -48,6 +51,57 @@ models:
         tpm: 999999
     timeout: 120
     max_retries: 2
+
+llm:
+  annotators: []  # default: no LLMs configured. Override per experiment.
+  # Example populated config:
+  # annotators:
+  #   - id: "qwen25-vl-72b"
+  #     provider: "vllm"
+  #     base_url: "http://localhost:8000"
+  #     model_name: "Qwen/Qwen2.5-VL-72B-Instruct"
+  #     temperature: 0.1
+  #     max_tokens: 2048
+  #     api_key: ""  # empty = no auth header
+  batch_size: 10
+  max_concurrent: 4
+
+classifier:
+  annotators: []  # default: no classifiers configured. Override per experiment.
+  # Example populated config:
+  # annotators:
+  #   - id: "feeding-activity-v1"
+  #     plugin: "audio_cnn_classifier"
+  #     model_path: "/models/feeding_cnn_v1.pt"
+  #     device: "cpu"
+  #     extra_params: {}
+  batch_size: 16
+  max_concurrent: 2
+
+rule:
+  annotators: []  # default: no rules configured. Override per experiment.
+  # Example populated config:
+  # annotators:
+  #   - id: "night-scene-rule"
+  #     plugin: "brightness_rule"
+  #     rule_id: "brightness_lt_0.3"
+  #     extra_params: {threshold: 0.3}
+  batch_size: 50
+  max_concurrent: 8
+
+human:
+  annotators: []  # default: no human annotators configured. Override per experiment.
+  # Example populated config:
+  # annotators:
+  #   - id: "ls-project-1"
+  #     ls_base_url: "http://localhost:8080"
+  #     ls_project_id: 1
+  #     ls_api_token_env: "LABEL_STUDIO_TOKEN"  # env var name (not the token itself)
+  #     annotation_template: "default"
+  batch_size: 50
+
+quality:
+  anomaly_threshold: 0.3
 
 dpo:
   min_pairs_per_release: 500

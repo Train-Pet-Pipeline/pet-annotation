@@ -28,15 +28,25 @@ class OpenAICompatProvider(BaseProvider):
         model_name: Model identifier for the API.
         timeout: Request timeout in seconds.
         max_retries: Maximum retry attempts on transient errors.
+        temperature: Sampling temperature (default 0.1 for deterministic annotation).
+        max_tokens: Maximum tokens to generate in the response.
     """
 
     def __init__(
-        self, base_url: str, model_name: str, timeout: int = 60, max_retries: int = 3
+        self,
+        base_url: str,
+        model_name: str,
+        timeout: int = 60,
+        max_retries: int = 3,
+        temperature: float = 0.1,
+        max_tokens: int = 2048,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._max_retries = max_retries
+        self._temperature = temperature
+        self._max_tokens = max_tokens
         self._session: aiohttp.ClientSession | None = None
         self._call_api_with_retry = standard_retry_async(self._call_api, max_attempts=max_retries)
 
@@ -55,16 +65,15 @@ class OpenAICompatProvider(BaseProvider):
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def annotate(self, image_path: str, prompt: PromptPair, api_key: str) -> ProviderResult:
-        """Send a single frame for annotation via chat completions endpoint.
+    def _build_payload(self, image_path: str, prompt: PromptPair) -> dict:
+        """Build the chat completions request payload (shared between providers).
 
         Args:
             image_path: Path to the image file.
             prompt: (system_prompt, user_prompt) tuple.
-            api_key: API key for Authorization header.
 
         Returns:
-            ProviderResult with parsed response.
+            Request payload dict with model, messages, temperature, and max_tokens.
         """
         system_prompt, user_prompt = prompt
         image_b64 = self._encode_image(image_path)
@@ -83,12 +92,25 @@ class OpenAICompatProvider(BaseProvider):
             },
         ]
 
-        payload = {
+        return {
             "model": self._model_name,
             "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": 2048,
+            "temperature": self._temperature,
+            "max_tokens": self._max_tokens,
         }
+
+    async def annotate(self, image_path: str, prompt: PromptPair, api_key: str) -> ProviderResult:
+        """Send a single frame for annotation via chat completions endpoint.
+
+        Args:
+            image_path: Path to the image file.
+            prompt: (system_prompt, user_prompt) tuple.
+            api_key: API key for Authorization header.
+
+        Returns:
+            ProviderResult with parsed response.
+        """
+        payload = self._build_payload(image_path, prompt)
 
         headers = {"Content-Type": "application/json"}
         if api_key:

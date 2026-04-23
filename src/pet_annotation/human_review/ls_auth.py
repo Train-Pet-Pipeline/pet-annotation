@@ -126,7 +126,7 @@ def _session_login(
         raise RuntimeError("Label Studio login did not return a session cookie")
 
     # Set CSRF header for all subsequent API calls
-    csrf = session.cookies.get("csrftoken", "")
+    csrf: str = session.cookies.get("csrftoken") or ""
     session.headers.update(
         {
             "X-CSRFToken": csrf,
