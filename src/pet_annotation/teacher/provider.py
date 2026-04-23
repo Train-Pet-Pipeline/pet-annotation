@@ -124,6 +124,8 @@ class ProviderRegistry:
                 model_name=model_cfg.model_name,
                 timeout=model_cfg.timeout,
                 max_retries=model_cfg.max_retries,
+                temperature=model_cfg.temperature,
+                max_tokens=model_cfg.max_tokens,
             )
             tracker = RateTracker(model_cfg.accounts)
             self._entries[model_name] = (provider, tracker)

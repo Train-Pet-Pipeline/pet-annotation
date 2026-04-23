@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from pet_annotation.config import AccountConfig, AnnotationConfig, load_config, setup_logging
+from pet_annotation.config import (
+    AccountConfig,
+    AnnotationConfig,
+    LLMAnnotatorConfig,
+    LLMParadigmConfig,
+    load_config,
+    setup_logging,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -128,3 +135,425 @@ def test_params_has_modality_default() -> None:
     params_path = Path(__file__).parent.parent / "params.yaml"
     params = yaml.safe_load(params_path.read_text())
     assert params["annotation"]["modality_default"] == "vision"
+
+
+# ---------------------------------------------------------------------------
+# LLMAnnotatorConfig / LLMParadigmConfig tests (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+def test_llm_paradigm_config_empty_annotators_default() -> None:
+    """LLMParadigmConfig default has empty annotators list (N=0 valid)."""
+    cfg = LLMParadigmConfig()
+    assert cfg.annotators == []
+    assert cfg.batch_size == 10
+    assert cfg.max_concurrent == 4
+
+
+def test_llm_annotator_config_valid() -> None:
+    """LLMAnnotatorConfig validates all fields correctly."""
+    cfg = LLMAnnotatorConfig(
+        id="qwen25-vl-72b",
+        provider="vllm",
+        base_url="http://localhost:8000",
+        model_name="Qwen/Qwen2.5-VL-72B-Instruct",
+        temperature=0.1,
+        max_tokens=2048,
+        api_key="",
+    )
+    assert cfg.id == "qwen25-vl-72b"
+    assert cfg.provider == "vllm"
+    assert cfg.api_key == ""
+
+
+def test_llm_annotator_config_extra_forbid() -> None:
+    """LLMAnnotatorConfig must reject unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        LLMAnnotatorConfig(
+            id="a",
+            provider="vllm",
+            base_url="http://x",
+            model_name="m",
+            unknown_field="oops",
+        )
+
+
+def test_llm_paradigm_config_extra_forbid() -> None:
+    """LLMParadigmConfig must reject unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        LLMParadigmConfig(annotators=[], unknown_field="oops")
+
+
+def test_llm_paradigm_with_one_annotator() -> None:
+    """LLMParadigmConfig with 1 annotator parses correctly."""
+    cfg = LLMParadigmConfig(
+        annotators=[
+            {
+                "id": "local-qwen",
+                "provider": "vllm",
+                "base_url": "http://localhost:8000",
+                "model_name": "Qwen/Qwen2.5-VL-72B-Instruct",
+            }
+        ]
+    )
+    assert len(cfg.annotators) == 1
+    assert cfg.annotators[0].id == "local-qwen"
+
+
+def test_llm_paradigm_with_three_annotators() -> None:
+    """LLMParadigmConfig with 3 annotators parses correctly."""
+    annotators = [
+        {"id": f"ann-{i}", "provider": "vllm", "base_url": "http://x", "model_name": "m"}
+        for i in range(3)
+    ]
+    cfg = LLMParadigmConfig(annotators=annotators)
+    assert len(cfg.annotators) == 3
+    assert [a.id for a in cfg.annotators] == ["ann-0", "ann-1", "ann-2"]
+
+
+def test_annotation_config_has_llm_field_with_default(minimal_params: Path) -> None:
+    """AnnotationConfig parsed from minimal params has llm field with default."""
+    cfg = load_config(minimal_params)
+    assert hasattr(cfg, "llm")
+    assert isinstance(cfg.llm, LLMParadigmConfig)
+    assert cfg.llm.annotators == []
+
+
+def test_annotation_params_pet_data_db_path_default() -> None:
+    """AnnotationParams.pet_data_db_path has a default value."""
+    from pet_annotation.config import AnnotationParams
+
+    params = AnnotationParams(primary_model="x")
+    assert params.pet_data_db_path == "/data/pet-data/pet_data.db"
+
+
+# ---------------------------------------------------------------------------
+# ClassifierAnnotatorConfig / ClassifierParadigmConfig tests (Phase 4 Subagent C)
+# ---------------------------------------------------------------------------
+
+
+def test_classifier_paradigm_config_empty_annotators_default() -> None:
+    """ClassifierParadigmConfig default has empty annotators list (N=0 valid)."""
+    from pet_annotation.config import ClassifierParadigmConfig
+
+    cfg = ClassifierParadigmConfig()
+    assert cfg.annotators == []
+    assert cfg.batch_size == 16
+    assert cfg.max_concurrent == 2
+
+
+def test_classifier_annotator_config_valid() -> None:
+    """ClassifierAnnotatorConfig validates all required and optional fields."""
+    from pet_annotation.config import ClassifierAnnotatorConfig
+
+    cfg = ClassifierAnnotatorConfig(
+        id="feeding-activity-v1",
+        plugin="audio_cnn_classifier",
+        model_path="/models/feeding_cnn_v1.pt",
+        device="cpu",
+    )
+    assert cfg.id == "feeding-activity-v1"
+    assert cfg.plugin == "audio_cnn_classifier"
+    assert cfg.model_path == "/models/feeding_cnn_v1.pt"
+    assert cfg.device == "cpu"
+    assert cfg.extra_params == {}
+
+
+def test_classifier_annotator_config_extra_params() -> None:
+    """ClassifierAnnotatorConfig stores plugin-specific extra_params."""
+    from pet_annotation.config import ClassifierAnnotatorConfig
+
+    cfg = ClassifierAnnotatorConfig(
+        id="cnn-v2",
+        plugin="audio_cnn_classifier",
+        model_path="/m.pt",
+        extra_params={"top_k": 3, "threshold": 0.5},
+    )
+    assert cfg.extra_params["top_k"] == 3
+    assert cfg.extra_params["threshold"] == 0.5
+
+
+def test_classifier_annotator_config_extra_forbid() -> None:
+    """ClassifierAnnotatorConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import ClassifierAnnotatorConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ClassifierAnnotatorConfig(
+            id="x",
+            plugin="y",
+            model_path="/z",
+            unknown_field="oops",
+        )
+
+
+def test_classifier_paradigm_config_extra_forbid() -> None:
+    """ClassifierParadigmConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import ClassifierParadigmConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ClassifierParadigmConfig(annotators=[], unknown_field="oops")
+
+
+def test_classifier_paradigm_with_one_annotator() -> None:
+    """ClassifierParadigmConfig with 1 annotator parses correctly."""
+    from pet_annotation.config import ClassifierParadigmConfig
+
+    cfg = ClassifierParadigmConfig(
+        annotators=[
+            {
+                "id": "feeding-v1",
+                "plugin": "audio_cnn_classifier",
+                "model_path": "/models/feeding.pt",
+            }
+        ]
+    )
+    assert len(cfg.annotators) == 1
+    assert cfg.annotators[0].id == "feeding-v1"
+
+
+def test_classifier_paradigm_with_multiple_annotators() -> None:
+    """ClassifierParadigmConfig with 3 annotators parses all correctly."""
+    from pet_annotation.config import ClassifierParadigmConfig
+
+    annotators = [
+        {"id": f"cls-{i}", "plugin": "audio_cnn_classifier", "model_path": f"/m{i}.pt"}
+        for i in range(3)
+    ]
+    cfg = ClassifierParadigmConfig(annotators=annotators)
+    assert len(cfg.annotators) == 3
+    assert [a.id for a in cfg.annotators] == ["cls-0", "cls-1", "cls-2"]
+
+
+def test_annotation_config_has_classifier_field_with_default(minimal_params: Path) -> None:
+    """AnnotationConfig parsed from minimal params has classifier field with default."""
+    from pet_annotation.config import ClassifierParadigmConfig
+
+    cfg = load_config(minimal_params)
+    assert hasattr(cfg, "classifier")
+    assert isinstance(cfg.classifier, ClassifierParadigmConfig)
+    assert cfg.classifier.annotators == []
+
+
+# ---------------------------------------------------------------------------
+# RuleAnnotatorConfig / RuleParadigmConfig tests (Phase 4 Subagent C)
+# ---------------------------------------------------------------------------
+
+
+def test_rule_paradigm_config_empty_annotators_default() -> None:
+    """RuleParadigmConfig default has empty annotators list (N=0 valid)."""
+    from pet_annotation.config import RuleParadigmConfig
+
+    cfg = RuleParadigmConfig()
+    assert cfg.annotators == []
+    assert cfg.batch_size == 50
+    assert cfg.max_concurrent == 8
+
+
+def test_rule_annotator_config_valid() -> None:
+    """RuleAnnotatorConfig validates all required and optional fields."""
+    from pet_annotation.config import RuleAnnotatorConfig
+
+    cfg = RuleAnnotatorConfig(
+        id="night-scene-rule",
+        plugin="brightness_rule",
+        rule_id="brightness_lt_0.3",
+    )
+    assert cfg.id == "night-scene-rule"
+    assert cfg.plugin == "brightness_rule"
+    assert cfg.rule_id == "brightness_lt_0.3"
+    assert cfg.extra_params == {}
+
+
+def test_rule_annotator_config_extra_params() -> None:
+    """RuleAnnotatorConfig stores plugin-specific extra_params."""
+    from pet_annotation.config import RuleAnnotatorConfig
+
+    cfg = RuleAnnotatorConfig(
+        id="bright-rule",
+        plugin="brightness_rule",
+        rule_id="brightness_lt_0.3",
+        extra_params={"threshold": 0.3},
+    )
+    assert cfg.extra_params["threshold"] == 0.3
+
+
+def test_rule_annotator_config_extra_forbid() -> None:
+    """RuleAnnotatorConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import RuleAnnotatorConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RuleAnnotatorConfig(
+            id="r",
+            plugin="p",
+            rule_id="rid",
+            unknown_field="oops",
+        )
+
+
+def test_rule_paradigm_config_extra_forbid() -> None:
+    """RuleParadigmConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import RuleParadigmConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RuleParadigmConfig(annotators=[], unknown_field="oops")
+
+
+def test_rule_paradigm_with_one_annotator() -> None:
+    """RuleParadigmConfig with 1 annotator parses correctly."""
+    from pet_annotation.config import RuleParadigmConfig
+
+    cfg = RuleParadigmConfig(
+        annotators=[
+            {
+                "id": "night-scene",
+                "plugin": "brightness_rule",
+                "rule_id": "brightness_lt_0.3",
+                "extra_params": {"threshold": 0.3},
+            }
+        ]
+    )
+    assert len(cfg.annotators) == 1
+    assert cfg.annotators[0].rule_id == "brightness_lt_0.3"
+
+
+def test_rule_paradigm_with_multiple_annotators() -> None:
+    """RuleParadigmConfig with 3 annotators parses all correctly."""
+    from pet_annotation.config import RuleParadigmConfig
+
+    annotators = [
+        {"id": f"rule-{i}", "plugin": "some_rule", "rule_id": f"rid-{i}"}
+        for i in range(3)
+    ]
+    cfg = RuleParadigmConfig(annotators=annotators)
+    assert len(cfg.annotators) == 3
+    assert [a.id for a in cfg.annotators] == ["rule-0", "rule-1", "rule-2"]
+
+
+def test_annotation_config_has_rule_field_with_default(minimal_params: Path) -> None:
+    """AnnotationConfig parsed from minimal params has rule field with default."""
+    from pet_annotation.config import RuleParadigmConfig
+
+    cfg = load_config(minimal_params)
+    assert hasattr(cfg, "rule")
+    assert isinstance(cfg.rule, RuleParadigmConfig)
+    assert cfg.rule.annotators == []
+
+
+# ---------------------------------------------------------------------------
+# HumanAnnotatorConfig / HumanParadigmConfig tests (Phase 4 Subagent D)
+# ---------------------------------------------------------------------------
+
+
+def test_human_paradigm_config_empty_annotators_default() -> None:
+    """HumanParadigmConfig default has empty annotators list (N=0 valid)."""
+    from pet_annotation.config import HumanParadigmConfig
+
+    cfg = HumanParadigmConfig()
+    assert cfg.annotators == []
+    assert cfg.batch_size == 50
+
+
+def test_human_annotator_config_valid() -> None:
+    """HumanAnnotatorConfig validates all required and optional fields."""
+    from pet_annotation.config import HumanAnnotatorConfig
+
+    cfg = HumanAnnotatorConfig(
+        id="ls-project-1",
+        ls_base_url="http://localhost:8080",
+        ls_project_id=1,
+        ls_api_token_env="LABEL_STUDIO_TOKEN",
+        annotation_template="default",
+    )
+    assert cfg.id == "ls-project-1"
+    assert cfg.ls_base_url == "http://localhost:8080"
+    assert cfg.ls_project_id == 1
+    assert cfg.ls_api_token_env == "LABEL_STUDIO_TOKEN"
+    assert cfg.annotation_template == "default"
+
+
+def test_human_annotator_config_defaults() -> None:
+    """HumanAnnotatorConfig uses correct defaults for optional fields."""
+    from pet_annotation.config import HumanAnnotatorConfig
+
+    cfg = HumanAnnotatorConfig(
+        id="ls-1",
+        ls_base_url="http://localhost:8080",
+        ls_project_id=42,
+    )
+    assert cfg.ls_api_token_env == "LABEL_STUDIO_TOKEN"
+    assert cfg.annotation_template == "default"
+
+
+def test_human_annotator_config_extra_forbid() -> None:
+    """HumanAnnotatorConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import HumanAnnotatorConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        HumanAnnotatorConfig(
+            id="ls-1",
+            ls_base_url="http://localhost:8080",
+            ls_project_id=1,
+            unknown_field="oops",
+        )
+
+
+def test_human_paradigm_config_extra_forbid() -> None:
+    """HumanParadigmConfig rejects unknown fields (extra='forbid')."""
+    from pydantic import ValidationError
+
+    from pet_annotation.config import HumanParadigmConfig
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        HumanParadigmConfig(annotators=[], unknown_field="oops")
+
+
+def test_human_paradigm_with_one_annotator() -> None:
+    """HumanParadigmConfig with 1 annotator parses correctly."""
+    from pet_annotation.config import HumanParadigmConfig
+
+    cfg = HumanParadigmConfig(
+        annotators=[
+            {
+                "id": "ls-project-1",
+                "ls_base_url": "http://localhost:8080",
+                "ls_project_id": 1,
+            }
+        ]
+    )
+    assert len(cfg.annotators) == 1
+    assert cfg.annotators[0].id == "ls-project-1"
+
+
+def test_annotation_config_has_human_field_with_default(minimal_params: Path) -> None:
+    """AnnotationConfig parsed from minimal params has human field with default."""
+    from pet_annotation.config import HumanParadigmConfig
+
+    cfg = load_config(minimal_params)
+    assert hasattr(cfg, "human")
+    assert isinstance(cfg.human, HumanParadigmConfig)
+    assert cfg.human.annotators == []
+
+
+def test_params_yaml_has_human_section() -> None:
+    """Verify that the actual params.yaml includes a human section."""
+    import yaml
+
+    params_path = Path(__file__).parent.parent / "params.yaml"
+    params = yaml.safe_load(params_path.read_text())
+    assert "human" in params
+    assert params["human"]["batch_size"] == 50
+    assert params["human"]["annotators"] == []

@@ -255,3 +255,11 @@ def test_init_schema_idempotent(tmp_path: Path) -> None:
     assert "classifier_annotations" in tables
     assert "rule_annotations" in tables
     assert "human_annotations" in tables
+
+
+def test_busy_timeout_param_override(tmp_path: Path) -> None:
+    """busy_timeout_ms param is respected — PRAGMA busy_timeout returns the set value."""
+    db = tmp_path / "timeout.db"
+    store = AnnotationStore(str(db), busy_timeout_ms=5000)
+    row = store._conn.execute("PRAGMA busy_timeout").fetchone()
+    assert row[0] == 5000
