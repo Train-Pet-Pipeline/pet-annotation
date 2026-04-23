@@ -1,6 +1,7 @@
 database:
   path: "/data/pet-data/pet_data.db"
   data_root: "/data/pet-data"
+  busy_timeout_ms: 10000
 
 annotation:
   batch_size: 16

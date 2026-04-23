@@ -30,14 +30,22 @@ class AnnotationStore:
 
     Args:
         db_path: Path string to the SQLite database file.
+        busy_timeout_ms: SQLite busy_timeout in milliseconds; loaded from
+            params.yaml database.busy_timeout_ms (default 10000).
     """
 
-    def __init__(self, db_path: str) -> None:
-        """Initialise store and create migrations tracking table."""
+    def __init__(self, db_path: str, busy_timeout_ms: int = 10000) -> None:
+        """Initialise store and create migrations tracking table.
+
+        Args:
+            db_path: Path to the SQLite database file.
+            busy_timeout_ms: Milliseconds to wait for a locked database before
+                raising an OperationalError (PRAGMA busy_timeout).
+        """
         self._conn = sqlite3.connect(db_path)
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
-        self._conn.execute("PRAGMA busy_timeout = 10000")
+        self._conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
         self._ensure_migrations_table()
 
     def init_schema(self) -> None:

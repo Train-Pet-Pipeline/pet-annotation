@@ -53,6 +53,7 @@ class DatabaseConfig(BaseModel):
 
     path: str
     data_root: str
+    busy_timeout_ms: int = 10000
 
 
 class AnnotationParams(BaseModel):
