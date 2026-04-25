@@ -20,6 +20,7 @@ import sqlite3
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from pet_schema import ClassifierAnnotation, HumanAnnotation, LLMAnnotation, RuleAnnotation
 from pet_schema.renderer import render_prompt
@@ -37,10 +38,29 @@ from pet_annotation.human_review.ls_auth import get_ls_session
 from pet_annotation.human_review.ls_client import LSClient
 from pet_annotation.rules.base import BaseRuleAnnotator
 from pet_annotation.store import AnnotationStore
+from pet_annotation.teacher.providers.doubao import DoubaoProvider
 from pet_annotation.teacher.providers.openai_compat import OpenAICompatProvider
 from pet_annotation.teacher.providers.vllm import VLLMProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_image_path(storage_uri: str | None, target_id: str) -> str:
+    """Resolve a pet-data storage_uri (RFC 3986) to a local file path or pass-through URL.
+
+    pet-data writes ``local:///abs/path`` for local files; this helper extracts the
+    path component so providers receive a real filesystem path. Non-local schemes
+    (http/https/s3) pass through unchanged for the provider to handle.
+
+    F005 fix: previously the URI string was passed directly as image_path, which
+    caused open() to fail with "[Errno 2] No such file or directory: 'local:///...'".
+    """
+    if not storage_uri:
+        return target_id
+    parsed = urlparse(storage_uri)
+    if parsed.scheme in ("", "file", "local"):
+        return parsed.path or storage_uri
+    return storage_uri
 
 
 def compute_prompt_hash(system_prompt: str, user_prompt: str, schema_version: str) -> str:
@@ -69,6 +89,15 @@ def _build_provider(llm_cfg: LLMAnnotatorConfig) -> OpenAICompatProvider:
     """
     if llm_cfg.provider == "vllm":
         return VLLMProvider(
+            base_url=llm_cfg.base_url,
+            model_name=llm_cfg.model_name,
+            temperature=llm_cfg.temperature,
+            max_tokens=llm_cfg.max_tokens,
+        )
+    # F004 fix: route doubao to its dedicated provider class (was routed to
+    # OpenAICompatProvider before, making the registered DoubaoProvider unreachable)
+    if llm_cfg.provider == "doubao":
+        return DoubaoProvider(
             base_url=llm_cfg.base_url,
             model_name=llm_cfg.model_name,
             temperature=llm_cfg.temperature,
@@ -637,7 +666,7 @@ class AnnotationOrchestrator:
             # Falls back to target_id when the frames table lacks a storage_uri column
             # or the row is not found (e.g., minimal test fixtures).
             storage_uri = await self._fetch_storage_uri(target_id)
-            image_path = storage_uri if storage_uri is not None else target_id
+            image_path = _resolve_image_path(storage_uri, target_id)  # F005 fix: parse URI scheme
 
             raw_response, prompt_tokens, completion_tokens = await self._call_provider(
                 provider, image_path, prompt_pair, api_key
@@ -707,7 +736,7 @@ class AnnotationOrchestrator:
         async with semaphore:
             # Resolve storage_uri from pet-data frames table; fall back to target_id.
             storage_uri = await self._fetch_storage_uri(target_id)
-            target_data = storage_uri if storage_uri is not None else target_id
+            target_data = _resolve_image_path(storage_uri, target_id)  # F005 fix: parse URI scheme
 
             predicted_class, class_probs, logits = await asyncio.to_thread(
                 plugin.annotate,

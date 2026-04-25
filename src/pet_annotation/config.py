@@ -72,7 +72,7 @@ class LLMAnnotatorConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    provider: Literal["openai_compat", "vllm"]
+    provider: Literal["openai_compat", "vllm", "doubao"]
     base_url: str
     model_name: str
     temperature: float = 0.1
