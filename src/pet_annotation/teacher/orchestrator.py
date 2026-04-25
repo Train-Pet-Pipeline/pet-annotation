@@ -20,6 +20,7 @@ import sqlite3
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from pet_schema import ClassifierAnnotation, HumanAnnotation, LLMAnnotation, RuleAnnotation
 from pet_schema.renderer import render_prompt
@@ -39,7 +40,6 @@ from pet_annotation.rules.base import BaseRuleAnnotator
 from pet_annotation.store import AnnotationStore
 from pet_annotation.teacher.providers.openai_compat import OpenAICompatProvider
 from pet_annotation.teacher.providers.vllm import VLLMProvider
-from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
