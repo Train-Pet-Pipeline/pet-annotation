@@ -38,6 +38,7 @@ from pet_annotation.human_review.ls_auth import get_ls_session
 from pet_annotation.human_review.ls_client import LSClient
 from pet_annotation.rules.base import BaseRuleAnnotator
 from pet_annotation.store import AnnotationStore
+from pet_annotation.teacher.providers.doubao import DoubaoProvider
 from pet_annotation.teacher.providers.openai_compat import OpenAICompatProvider
 from pet_annotation.teacher.providers.vllm import VLLMProvider
 
@@ -88,6 +89,15 @@ def _build_provider(llm_cfg: LLMAnnotatorConfig) -> OpenAICompatProvider:
     """
     if llm_cfg.provider == "vllm":
         return VLLMProvider(
+            base_url=llm_cfg.base_url,
+            model_name=llm_cfg.model_name,
+            temperature=llm_cfg.temperature,
+            max_tokens=llm_cfg.max_tokens,
+        )
+    # F004 fix: route doubao to its dedicated provider class (was routed to
+    # OpenAICompatProvider before, making the registered DoubaoProvider unreachable)
+    if llm_cfg.provider == "doubao":
+        return DoubaoProvider(
             base_url=llm_cfg.base_url,
             model_name=llm_cfg.model_name,
             temperature=llm_cfg.temperature,
