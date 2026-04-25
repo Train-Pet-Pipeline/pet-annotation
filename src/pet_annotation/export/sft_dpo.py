@@ -234,15 +234,42 @@ def to_sft_samples(
         return []
 
     elif annotator_type == "llm":
+        from urllib.parse import urlparse
+
+        def _resolve_image_path(uri: str | None) -> str | None:
+            """Resolve pet-data URI (RFC 3986) to local path or pass-through (F005 helper).
+
+            For VLM SFT, LLaMA-Factory wants real filesystem paths or URLs in the
+            ``images`` field. ``local:///abs/path`` → ``/abs/path``; http(s)/s3
+            pass through as-is.
+            """
+            if not uri:
+                return None
+            parsed = urlparse(uri)
+            if parsed.scheme in ("", "file", "local"):
+                return parsed.path or uri
+            return uri
+
         for row in _iter_done_llm_rows(store):
             system_prompt, user_prompt = _get_prompt(row["schema_version"])
             output_text = row["raw_response"] or json.dumps(row["parsed_output"])
+            # F001 (v3.3.0): inject <image> placeholder + populate images field
+            # for VLM SFT. Phase 3A production format restored after v3.2.0
+            # regression. text-only fallback when storage_uri is empty.
+            resolved = _resolve_image_path(row.get("storage_uri"))
+            if resolved:
+                images_list: list[str] | None = [resolved]
+                user_value = "<image>\n" + user_prompt
+            else:
+                images_list = None
+                user_value = user_prompt
             sample = ShareGPTSFTSample(
                 conversations=[
                     ShareGPTTurn(**{"from": "system", "value": system_prompt}),
-                    ShareGPTTurn(**{"from": "human", "value": user_prompt}),
+                    ShareGPTTurn(**{"from": "human", "value": user_value}),
                     ShareGPTTurn(**{"from": "gpt", "value": output_text}),
                 ],
+                images=images_list,
                 sample_id=row["target_id"],
                 source_target_id=row["target_id"],
                 annotator_id=row["annotator_id"],

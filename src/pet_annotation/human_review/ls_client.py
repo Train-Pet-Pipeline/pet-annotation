@@ -33,7 +33,7 @@ def _is_retriable_http_error(exc: BaseException) -> bool:
     Don't retry on 4xx auth/validation (401 bad token, 404 missing project, 400 bad body).
     CLAUDE.md: external API calls must use tenacity; no silent failure.
     """
-    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+    if isinstance(exc, requests.ConnectionError | requests.Timeout):
         return True
     if isinstance(exc, requests.HTTPError):
         resp = exc.response
