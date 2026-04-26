@@ -1,0 +1,55 @@
+name: release-version-consistency
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify pyproject version matches release tag / PR title
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          python - <<'PYEOF'
+          import os, re, sys, tomllib
+          event = os.environ.get("EVENT_NAME", "")
+          py_ver = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          expected = None
+          source = None
+          if event == "push":
+              ref = os.environ.get("REF_NAME", "")
+              if not ref.startswith("v"):
+                  print(f"SKIP: tag {ref!r} does not start with 'v'")
+                  sys.exit(0)
+              expected = ref[1:]
+              source = f"git tag {ref!r}"
+          elif event == "pull_request":
+              base = os.environ.get("BASE_REF", "")
+              if base != "main":
+                  print(f"SKIP: PR base is {base!r}, not main")
+                  sys.exit(0)
+              title = os.environ.get("PR_TITLE", "")
+              m = re.search(r"v(\d+\.\d+\.\d+(?:[-+][\w.]+)?)", title)
+              if not m:
+                  print(f"SKIP: PR title {title!r} does not contain vX.Y.Z marker (not a release PR)")
+                  sys.exit(0)
+              expected = m.group(1)
+              source = f"PR title {title!r}"
+          else:
+              print(f"SKIP: unsupported event {event!r}")
+              sys.exit(0)
+          if py_ver != expected:
+              print(f"FAIL: pyproject.toml::project.version == {py_ver!r} but {source} expects {expected!r}", file=sys.stderr)
+              print("F018 prevention guard: bump pyproject.toml in the release PR before tagging.", file=sys.stderr)
+              sys.exit(1)
+          print(f"OK: pyproject.toml=={py_ver!r} matches {source}")
+          PYEOF
