@@ -7,7 +7,7 @@ import pet_annotation._version_pins as pins
 
 
 def test_version():
-    assert pet_annotation.__version__ == "2.1.1"
+    assert pet_annotation.__version__ == "2.2.1"
 
 
 def test_version_parity():
