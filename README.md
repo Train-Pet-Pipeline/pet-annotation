@@ -7,7 +7,7 @@ VLM annotation, quality check, and training data export pipeline for the Train-P
 Install peer dependencies before this package:
 
 ```bash
-pip install 'pet-infra @ git+https://github.com/Train-Pet-Pipeline/pet-infra@v2.1.0'
+pip install 'pet-infra @ git+https://github.com/Train-Pet-Pipeline/pet-infra@v2.9.5'
 pip install -e ".[dev]" --no-deps
 pip install -e ".[dev]"
 ```
