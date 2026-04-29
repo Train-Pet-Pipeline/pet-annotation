@@ -67,6 +67,10 @@ class LLMAnnotatorConfig(BaseModel):
         temperature: Sampling temperature.
         max_tokens: Maximum tokens to generate.
         api_key: API key string; empty string means no auth header.
+        extra_payload: Opaque key/value pairs merged into the chat-completions
+            request body. Use to enable provider-specific knobs that are not in
+            the OpenAI shape, e.g. ``{"thinking": {"type": "disabled"}}`` to
+            disable Doubao reasoning. Default: None (no merge).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -78,6 +82,7 @@ class LLMAnnotatorConfig(BaseModel):
     temperature: float = 0.1
     max_tokens: int = 2048
     api_key: str = ""
+    extra_payload: dict[str, Any] | None = None
 
 
 class LLMParadigmConfig(BaseModel):
