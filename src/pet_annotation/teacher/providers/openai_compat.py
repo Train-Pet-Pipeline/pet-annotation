@@ -40,6 +40,7 @@ class OpenAICompatProvider(BaseProvider):
         max_retries: int = 3,
         temperature: float = 0.1,
         max_tokens: int = 2048,
+        extra_payload: dict | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
@@ -47,6 +48,7 @@ class OpenAICompatProvider(BaseProvider):
         self._max_retries = max_retries
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._extra_payload = extra_payload or {}
         self._session: aiohttp.ClientSession | None = None
         self._call_api_with_retry = standard_retry_async(self._call_api, max_attempts=max_retries)
 
@@ -92,12 +94,15 @@ class OpenAICompatProvider(BaseProvider):
             },
         ]
 
-        return {
+        result = {
             "model": self._model_name,
             "messages": messages,
             "temperature": self._temperature,
             "max_tokens": self._max_tokens,
         }
+        if self._extra_payload:
+            result.update(self._extra_payload)
+        return result
 
     async def annotate(self, image_path: str, prompt: PromptPair, api_key: str) -> ProviderResult:
         """Send a single frame for annotation via chat completions endpoint.

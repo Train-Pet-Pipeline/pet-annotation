@@ -63,6 +63,15 @@ llm:
   #     temperature: 0.1
   #     max_tokens: 2048
   #     api_key: ""  # empty = no auth header
+  #   - id: "doubao-seed-2-0-mini"
+  #     provider: "doubao"
+  #     base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  #     model_name: "doubao-seed-2-0-mini-260215"
+  #     temperature: 0.1
+  #     max_tokens: 2048
+  #     api_key: ""
+  #     extra_payload:
+  #       thinking: {type: disabled}  # disable Doubao reasoning mode (~6x speedup)
   batch_size: 10
   max_concurrent: 4
 

@@ -34,15 +34,10 @@ class VLLMProvider(OpenAICompatProvider):
         max_retries: int = 2,
         temperature: float = 0.1,
         max_tokens: int = 2048,
+        extra_payload: dict | None = None,
     ) -> None:
-        """Initialize VLLMProvider with custom defaults for local deployment.
-
-        Args:
-            base_url: vLLM server URL.
-            model_name: Model name.
-            timeout: Request timeout in seconds (default 120 for local).
-            max_retries: Maximum retry attempts (default 2 for stability).
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens to generate.
-        """
-        super().__init__(base_url, model_name, timeout, max_retries, temperature, max_tokens)
+        """Initialize VLLMProvider with custom defaults for local deployment."""
+        super().__init__(
+            base_url, model_name, timeout, max_retries,
+            temperature, max_tokens, extra_payload,
+        )
