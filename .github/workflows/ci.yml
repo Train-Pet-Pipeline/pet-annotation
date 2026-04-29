@@ -24,7 +24,7 @@ jobs:
         run: git config --global url."https://x-access-token:${{ secrets.CROSS_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install pet-schema (peer-dep)
-        run: pip install 'pet-schema @ git+https://github.com/Train-Pet-Pipeline/pet-schema@v3.3.0'
+        run: pip install 'pet-schema @ git+https://github.com/Train-Pet-Pipeline/pet-schema@v3.4.0'
 
       - name: Install pet-infra (peer-dep)
         run: pip install 'pet-infra @ git+https://github.com/Train-Pet-Pipeline/pet-infra@v2.6.0'
@@ -37,7 +37,7 @@ jobs:
 
       - name: Assert peer versions (§11.4)
         run: |
-          python -c "import importlib.metadata; v=importlib.metadata.version('pet-schema'); assert v=='3.3.0', v"
+          python -c "import importlib.metadata; v=importlib.metadata.version('pet-schema'); assert v=='3.4.0', v"
           python -c "import importlib.metadata; v=importlib.metadata.version('pet-infra'); assert v=='2.6.0', v"
 
       - name: Lint

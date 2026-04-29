@@ -93,6 +93,7 @@ def _build_provider(llm_cfg: LLMAnnotatorConfig) -> OpenAICompatProvider:
             model_name=llm_cfg.model_name,
             temperature=llm_cfg.temperature,
             max_tokens=llm_cfg.max_tokens,
+            extra_payload=llm_cfg.extra_payload,
         )
     # F004 fix: route doubao to its dedicated provider class (was routed to
     # OpenAICompatProvider before, making the registered DoubaoProvider unreachable)
@@ -102,6 +103,7 @@ def _build_provider(llm_cfg: LLMAnnotatorConfig) -> OpenAICompatProvider:
             model_name=llm_cfg.model_name,
             temperature=llm_cfg.temperature,
             max_tokens=llm_cfg.max_tokens,
+            extra_payload=llm_cfg.extra_payload,
         )
     # openai_compat
     return OpenAICompatProvider(
@@ -109,6 +111,7 @@ def _build_provider(llm_cfg: LLMAnnotatorConfig) -> OpenAICompatProvider:
         model_name=llm_cfg.model_name,
         temperature=llm_cfg.temperature,
         max_tokens=llm_cfg.max_tokens,
+        extra_payload=llm_cfg.extra_payload,
     )
 
 
